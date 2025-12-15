@@ -160,7 +160,7 @@ def draw_expression_sheet(character, pose, images, output_path):
             draw.text((text_x_center, text_y), text, fill="black")
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    sheet.save(output_path)
+    sheet.save(output_path, format="PNG", compress_level=0, optimize=False)
     print(f"[INFO] Saved: {output_path}")
 
 # -----------------------

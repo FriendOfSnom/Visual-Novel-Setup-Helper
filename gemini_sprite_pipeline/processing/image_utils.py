@@ -33,7 +33,7 @@ def save_img_webp_or_png(img: Image.Image, dest_stem: Path) -> Path:
     except Exception as e:
         print(f"[WARN] WEBP save failed for {dest_stem.name}: {e}. Falling back to PNG.")
         out_path = dest_stem.with_suffix(".png")
-        safe_img.save(out_path, format="PNG")
+        safe_img.save(out_path, format="PNG", compress_level=0, optimize=False)
         return out_path
 
 
@@ -52,7 +52,7 @@ def save_image_bytes_as_png(image_bytes: bytes, dest_stem: Path) -> Path:
     dest_stem.parent.mkdir(parents=True, exist_ok=True)
     img = Image.open(BytesIO(image_bytes)).convert("RGBA")
     out_path = dest_stem.with_suffix(".png")
-    img.save(out_path, format="PNG")
+    img.save(out_path, format="PNG", compress_level=0, optimize=False)
     return out_path
 
 

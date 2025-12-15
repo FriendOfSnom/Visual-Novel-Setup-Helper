@@ -3,3 +3,12 @@ venv/
 renpy-8.5.0-sdk/
 student-transfer/
 Old_Files/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Test artifacts
+Test 1/
+nul

@@ -80,23 +80,27 @@ def generate_initial_pose_once(
     image_path: Path,
     out_stem: Path,
     gender_style: str,
+    background_color: str = "magenta (#FF00FF)",
 ) -> Path:
     """
-    Normalize the original sprite into pose A with a flat magenta background.
+    Normalize the original sprite into pose A with a flat background.
 
     Args:
         api_key: Gemini API key.
         image_path: Source image path.
         out_stem: Output path stem (without extension).
         gender_style: 'f' or 'm'.
+        background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
 
     Returns:
         Path to saved normalized pose image.
     """
     print("  [Gemini] Normalizing base pose...")
     image_b64 = load_image_as_base64(image_path)
-    prompt = build_initial_pose_prompt(gender_style)
-    img_bytes = call_gemini_image_edit(api_key, prompt, image_b64)
+    prompt = build_initial_pose_prompt(gender_style, background_color)
+    # Strip background only in automatic mode (magenta)
+    strip_bg = (background_color == "magenta (#FF00FF)")
+    img_bytes = call_gemini_image_edit(api_key, prompt, image_b64, strip_bg)
     final_path = save_image_bytes_as_png(img_bytes, out_stem)
     print(f"  Saved base pose to: {final_path}")
     return final_path
@@ -111,6 +115,7 @@ def generate_single_outfit(
     outfit_desc: str,
     outfit_prompt_config: Dict[str, Dict[str, Optional[str]]],
     archetype_label: str,
+    background_color: str = "magenta (#FF00FF)",
 ) -> Path:
     """
     Generate or regenerate a single outfit image for the given key.
@@ -127,6 +132,7 @@ def generate_single_outfit(
         outfit_desc: Outfit description/prompt.
         outfit_prompt_config: Per-outfit configuration.
         archetype_label: Character archetype.
+        background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
 
     Returns:
         Path to saved outfit image.
@@ -144,6 +150,7 @@ def generate_single_outfit(
             gender_style,
             archetype_label,
             outfit_desc,
+            background_color,
         )
         print(f"  Saved standardized outfit '{outfit_key}' to: {final_path}")
         return final_path
@@ -151,8 +158,10 @@ def generate_single_outfit(
     # Normal text-prompt-based outfit
     image_b64 = load_image_as_base64(base_pose_path)
     out_stem = outfits_dir / outfit_key.capitalize()
-    prompt = build_outfit_prompt(outfit_desc, gender_style)
-    img_bytes = call_gemini_image_edit(api_key, prompt, image_b64)
+    prompt = build_outfit_prompt(outfit_desc, gender_style, background_color)
+    # Strip background only in automatic mode (magenta)
+    strip_bg = (background_color == "magenta (#FF00FF)")
+    img_bytes = call_gemini_image_edit(api_key, prompt, image_b64, strip_bg)
     final_path = save_image_bytes_as_png(img_bytes, out_stem)
     print(f"  Saved outfit '{outfit_key}' to: {final_path}")
     return final_path
@@ -165,6 +174,7 @@ def generate_standard_uniform_outfit(
     gender_style: str,
     archetype_label: str,
     outfit_desc: str,  # Kept for signature compatibility
+    background_color: str = "magenta (#FF00FF)",
 ) -> Path:
     """
     Generate the standardized school uniform outfit using reference images.
@@ -179,6 +189,7 @@ def generate_standard_uniform_outfit(
         gender_style: 'f' or 'm'.
         archetype_label: Character archetype.
         outfit_desc: Not used directly, kept for compatibility.
+        background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
 
     Returns:
         Path to saved uniform outfit image.
@@ -187,12 +198,15 @@ def generate_standard_uniform_outfit(
 
     # Collect the uniform reference image(s) for this gender
     uniform_refs = get_standard_uniform_reference_images(gender_style)
+    # Strip background only in automatic mode (magenta)
+    strip_bg = (background_color == "magenta (#FF00FF)")
+
     if not uniform_refs:
         # Fallback to normal outfit prompt path
         print("[WARN] No uniform reference found, falling back to normal prompt-based uniform.")
         image_b64 = load_image_as_base64(base_pose_path)
-        prompt = build_outfit_prompt(outfit_desc, gender_style)
-        img_bytes = call_gemini_image_edit(api_key, prompt, image_b64)
+        prompt = build_outfit_prompt(outfit_desc, gender_style, background_color)
+        img_bytes = call_gemini_image_edit(api_key, prompt, image_b64, strip_bg)
         out_stem = outfits_dir / "Uniform"
         final_path = save_image_bytes_as_png(img_bytes, out_stem)
         print(f"  Saved fallback prompt-based uniform to: {final_path}")
@@ -206,6 +220,7 @@ def generate_standard_uniform_outfit(
     uniform_prompt = build_standard_school_uniform_prompt(
         archetype_label,
         gender_style,
+        background_color,
     )
 
     # Call Gemini with prompt and two reference images:
@@ -215,6 +230,7 @@ def generate_standard_uniform_outfit(
         api_key,
         uniform_prompt,
         ref_images=[base_pose_path, uniform_ref],
+        strip_bg=strip_bg,
     )
 
     out_stem = outfits_dir / "Uniform"
@@ -232,6 +248,7 @@ def generate_outfits_once(
     outfit_prompt_config: Dict[str, Dict[str, Optional[str]]],
     archetype_label: str,
     include_base_outfit: bool = True,
+    background_color: str = "magenta (#FF00FF)",
 ) -> List[Path]:
     """
     Generate outfits for a pose.
@@ -249,6 +266,7 @@ def generate_outfits_once(
         outfit_prompt_config: Per-outfit configuration.
         archetype_label: Character archetype.
         include_base_outfit: Whether to include base pose as an outfit.
+        background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
 
     Returns:
         List of paths to generated outfit images.
@@ -261,7 +279,7 @@ def generate_outfits_once(
         base_bytes = base_pose_path.read_bytes()
         base_img = Image.open(BytesIO(base_bytes)).convert("RGBA")
         base_out_path = (outfits_dir / "Base").with_suffix(".png")
-        base_img.save(base_out_path, format="PNG")
+        base_img.save(base_out_path, format="PNG", compress_level=0, optimize=False)
         paths.append(base_out_path)
 
     # Generate each selected outfit key
@@ -275,6 +293,7 @@ def generate_outfits_once(
             desc,
             outfit_prompt_config,
             archetype_label,
+            background_color,
         )
         paths.append(final_path)
 

@@ -99,7 +99,7 @@ def strip_background_legacy(image_bytes: bytes) -> bytes:
                     output_pixels[x, y] = (r, g, b, a)
 
         buffer = BytesIO()
-        output.save(buffer, format="PNG")
+        output.save(buffer, format="PNG", compress_level=0, optimize=False)
         return buffer.getvalue()
 
     except Exception as e:

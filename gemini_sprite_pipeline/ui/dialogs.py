@@ -31,6 +31,7 @@ from .tk_common import (
     TITLE_FONT,
     INSTRUCTION_FONT,
     LINE_COLOR,
+    WINDOW_MARGIN,
     center_and_clamp,
     compute_display_size,
     wraplength_for,
@@ -507,27 +508,6 @@ def prompt_character_idea_and_archetype() -> Tuple[str, str, str, str, str]:
         decision["name"],
         decision["gstyle"],
     )
-import yaml
-from PIL import Image, ImageTk
-
-from gsp_constants import (
-    REF_SPRITES_DIR,
-    ALL_OUTFIT_KEYS,
-    OUTFIT_KEYS,
-    EXPRESSIONS_SEQUENCE,
-)
-
-from .tk_common import (
-    BG_COLOR,
-    TITLE_FONT,
-    INSTRUCTION_FONT,
-    LINE_COLOR,
-    center_and_clamp,
-    compute_display_size,
-    wraplength_for,
-)
-
-
 def prompt_outfits_and_expressions(
     archetype_label: str,
     gender_style: str,

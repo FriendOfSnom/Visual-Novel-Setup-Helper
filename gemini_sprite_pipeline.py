@@ -44,6 +44,7 @@ from gemini_sprite_pipeline.ui import (
     prompt_for_crop,
     review_images_for_step,
     review_initial_base_pose,
+    click_to_remove_background,
 )
 from gemini_sprite_pipeline.processing import (
     generate_initial_pose_once,
@@ -138,6 +139,7 @@ def process_single_character(
     a_base_stem = a_dir / "base"
 
     use_base_as_outfit = True
+    background_color = "magenta (#FF00FF)"  # Start with automatic (magenta)
 
     # Generate and review base pose
     while True:
@@ -146,17 +148,35 @@ def process_single_character(
             image_path,
             a_base_stem,
             gender_style,
+            background_color,
         )
 
-        choice, use_flag = review_initial_base_pose(a_base_path)
+        # Determine if we're currently in manual mode
+        is_manual_mode = (background_color == "black (#000000)")
+
+        choice, use_flag, switch_mode = review_initial_base_pose(a_base_path, is_manual_mode)
         use_base_as_outfit = use_flag
 
         if choice == "accept":
             break
+        if choice == "switch_mode" or switch_mode:
+            # Toggle between automatic and manual background removal modes
+            if is_manual_mode:
+                # Switch to automatic mode
+                background_color = "magenta (#FF00FF)"
+                print("[INFO] Switching to automatic background removal mode (magenta background).")
+            else:
+                # Switch to manual mode
+                background_color = "black (#000000)"
+                print("[INFO] Switching to manual background removal mode (black background).")
+            continue
         if choice == "regenerate":
             continue
         if choice == "cancel":
             sys.exit(0)
+
+    # Determine if we're in manual mode
+    use_manual_removal = (background_color == "black (#000000)")
 
     # Generate outfits
     print("[INFO] Generating outfits for pose A...")
@@ -182,6 +202,7 @@ def process_single_character(
         outfit_prompt_config,
         archetype_label,
         include_base_outfit=use_base_as_outfit,
+        background_color=background_color,
     )
 
     # Review loop: regenerate individual outfits as needed
@@ -285,6 +306,7 @@ def process_single_character(
                 desc,
                 outfit_prompt_config,
                 archetype_label,
+                background_color,
             )
             continue
 
@@ -306,6 +328,7 @@ def process_single_character(
                 outfit_prompt_config,
                 archetype_label,
                 include_base_outfit=use_base_as_outfit,
+                background_color=background_color,
             )
             continue
 
@@ -317,7 +340,38 @@ def process_single_character(
         a_dir,
         "A",
         expressions_sequence=expressions_sequence,
+        background_color=background_color,
     )
+
+    # Manual background removal (if enabled)
+    if use_manual_removal:
+        print("\n[INFO] Manual background removal mode: Click to remove black backgrounds from all expressions.")
+
+        # Collect all expression images across all poses
+        all_expression_paths: List[Path] = []
+        for pose_dir in sorted(char_dir.iterdir()):
+            if not pose_dir.is_dir() or len(pose_dir.name) != 1 or not pose_dir.name.isalpha():
+                continue
+
+            faces_dir = pose_dir / "faces"
+            if not faces_dir.is_dir():
+                continue
+
+            # Collect expression images from all outfit folders
+            for expr_folder in sorted(faces_dir.iterdir()):
+                if not expr_folder.is_dir():
+                    continue
+
+                for expr_file in sorted(expr_folder.iterdir()):
+                    if expr_file.is_file() and expr_file.suffix.lower() in (".png", ".webp"):
+                        all_expression_paths.append(expr_file)
+
+        # Process each expression with click-to-remove UI
+        for expr_path in all_expression_paths:
+            print(f"\n[INFO] Manual background removal for: {expr_path.relative_to(char_dir)}")
+            click_to_remove_background(expr_path)
+
+        print("[INFO] Manual background removal completed for all expressions.")
 
     # Finalize character
     finalize_character(char_dir, display_name, voice, game_name)
@@ -401,7 +455,7 @@ def run_pipeline(output_root: Path, game_name: Optional[str] = None) -> None:
                 crop_dir = output_root / "_cropped_sources"
                 crop_dir.mkdir(parents=True, exist_ok=True)
                 cropped_path = crop_dir / f"{image_path.stem}_cropped.png"
-                cropped.save(cropped_path, format="PNG")
+                cropped.save(cropped_path, format="PNG", compress_level=0, optimize=False)
                 print(f"[INFO] Saved thigh-cropped source image to: {cropped_path}")
                 image_path = cropped_path
             else:

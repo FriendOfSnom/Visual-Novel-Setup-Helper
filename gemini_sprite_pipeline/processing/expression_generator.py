@@ -37,6 +37,7 @@ def generate_expressions_for_single_outfit_once(
     outfit_path: Path,
     faces_root: Path,
     expressions_sequence: Optional[List[Tuple[str, str]]] = None,
+    background_color: str = "magenta (#FF00FF)",
 ) -> List[Path]:
     """
     Generate a full expression set for a single outfit in a single pose.
@@ -55,6 +56,7 @@ def generate_expressions_for_single_outfit_once(
         outfit_path: Path to outfit image.
         faces_root: Root directory for face images.
         expressions_sequence: List of (key, description) tuples for expressions.
+        background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
 
     Returns:
         List of paths to generated expression images.
@@ -97,11 +99,13 @@ def generate_expressions_for_single_outfit_once(
 
     # Generate remaining expressions
     image_b64 = load_image_as_base64(outfit_path)
+    # Strip background only in automatic mode (magenta)
+    strip_bg = (background_color == "magenta (#FF00FF)")
 
     for idx, (orig_key, desc) in enumerate(expressions_sequence[1:], start=1):
         out_stem = out_dir / str(idx)
-        prompt = build_expression_prompt(desc)
-        img_bytes = call_gemini_image_edit(api_key, prompt, image_b64)
+        prompt = build_expression_prompt(desc, background_color)
+        img_bytes = call_gemini_image_edit(api_key, prompt, image_b64, strip_bg)
         final_path = save_image_bytes_as_png(img_bytes, out_stem)
 
         generated_paths.append(final_path)
@@ -119,6 +123,7 @@ def regenerate_single_expression(
     out_dir: Path,
     expressions_sequence: List[Tuple[str, str]],
     expr_index: int,
+    background_color: str = "magenta (#FF00FF)",
 ) -> Path:
     """
     Regenerate a single expression image for one outfit.
@@ -132,6 +137,7 @@ def regenerate_single_expression(
         out_dir: Directory to save expression.
         expressions_sequence: List of expression definitions.
         expr_index: Index of expression to regenerate.
+        background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
 
     Returns:
         Path to regenerated expression image.
@@ -153,8 +159,10 @@ def regenerate_single_expression(
 
     image_b64 = load_image_as_base64(outfit_path)
     out_stem = out_dir / str(expr_index)
-    prompt = build_expression_prompt(desc)
-    img_bytes = call_gemini_image_edit(api_key, prompt, image_b64)
+    prompt = build_expression_prompt(desc, background_color)
+    # Strip background only in automatic mode (magenta)
+    strip_bg = (background_color == "magenta (#FF00FF)")
+    img_bytes = call_gemini_image_edit(api_key, prompt, image_b64, strip_bg)
     final_path = save_image_bytes_as_png(img_bytes, out_stem)
     print(
         f"  [Expr] Regenerated expression index {expr_index} "
@@ -169,6 +177,7 @@ def generate_and_review_expressions_for_pose(
     pose_dir: Path,
     pose_label: str,
     expressions_sequence: List[Tuple[str, str]],
+    background_color: str = "magenta (#FF00FF)",
 ) -> None:
     """
     For a given pose directory (e.g., 'a'), iterate each outfit and:
@@ -187,6 +196,7 @@ def generate_and_review_expressions_for_pose(
         pose_dir: Pose directory.
         pose_label: Pose label for display.
         expressions_sequence: List of expression definitions.
+        background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
     """
     outfits_dir = pose_dir / "outfits"
     faces_root = pose_dir / "faces"
@@ -208,6 +218,7 @@ def generate_and_review_expressions_for_pose(
             outfit_path,
             faces_root,
             expressions_sequence=expressions_sequence,
+            background_color=background_color,
         )
 
         # Determine the folder where the expression images for this outfit live
@@ -269,6 +280,7 @@ def generate_and_review_expressions_for_pose(
                     outfit_path,
                     faces_root,
                     expressions_sequence=expressions_sequence,
+                    background_color=background_color,
                 )
                 continue
 
@@ -295,6 +307,7 @@ def generate_and_review_expressions_for_pose(
                     out_dir,
                     expressions_sequence,
                     expr_index,
+                    background_color,
                 )
                 # Loop to show the updated images
                 continue

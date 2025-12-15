@@ -131,7 +131,7 @@ def load_image_as_base64(path: Path) -> str:
     """
     img = Image.open(path).convert("RGBA")
     buffer = BytesIO()
-    img.save(buffer, format="PNG")
+    img.save(buffer, format="PNG", compress_level=0, optimize=False)
     raw_bytes = buffer.getvalue()
     return base64.b64encode(raw_bytes).decode("utf-8")
 
@@ -165,109 +165,75 @@ def _extract_inline_image_from_response(data: dict) -> Optional[bytes]:
 
 def strip_background(image_bytes: bytes) -> bytes:
     """
-    Remove background from image using ML-based method (rembg) with cleanup.
-
-    Two-stage process:
-    1. ML-based removal (rembg) - identifies subject vs background
-    2. Cleanup pass - removes any remaining colored background pixels
-
-    This handles edge cases like:
-    - Leftover background fragments (pink/magenta areas)
-    - Shadow halos and artifacts
-    - Background "pockets" inside character shapes
-    - Fine hair details preserved while removing surrounding pixels
-
-    Falls back to legacy threshold method if rembg is not available.
-
-    Args:
-        image_bytes: Input image as bytes
-
-    Returns:
-        Image bytes with background removed (transparent PNG)
-
-    Note:
-        First run will download ~200MB model (cached for future use).
-        Processing takes ~2-3 seconds per image on CPU.
+    Strip a flat-ish magenta background.
+    Strategy:
+      1) Load RGBA.
+      2) Collect all opaque border pixels.
+      3) Estimate background color as the average of those border pixels.
+      4) Clear any pixel sufficiently close to that background color.
     """
+    BG_CLEAR_THRESH = 56  # tweak this if it's too aggressive or too gentle
+
     try:
-        from rembg import remove
-        import numpy as np
+        img = Image.open(BytesIO(image_bytes)).convert("RGBA")
+        w, h = img.size
+        pixels = img.load()
 
-        print("[INFO] Using ML-based background removal (rembg)...")
+        border_samples = []
 
-        # Stage 1: ML-based removal
-        rembg_output = remove(image_bytes)
+        # top and bottom rows
+        for x in range(w):
+            for y in (0, h - 1):
+                r, g, b, a = pixels[x, y]
+                if a <= 0:
+                    continue
+                border_samples.append((r, g, b))
 
-        # Stage 2: Cleanup pass - remove any remaining colored background
-        img = Image.open(BytesIO(rembg_output)).convert("RGBA")
-        img_array = np.array(img)
+        # left and right columns
+        for y in range(h):
+            for x in (0, w - 1):
+                r, g, b, a = pixels[x, y]
+                if a <= 0:
+                    continue
+                border_samples.append((r, g, b))
 
-        # Sample border pixels to identify background color
-        height, width = img_array.shape[:2]
-        border_pixels = []
+        if not border_samples:
+            # Nothing to go on; just return original
+            return image_bytes
 
-        # Sample top and bottom edges
-        for x in range(0, width, max(1, width // 50)):  # Sample ~50 points per edge
-            # Top edge
-            if img_array[0, x, 3] > 0:  # If not transparent
-                border_pixels.append(img_array[0, x, :3])
-            # Bottom edge
-            if img_array[height-1, x, 3] > 0:
-                border_pixels.append(img_array[height-1, x, :3])
+        n = float(len(border_samples))
+        bg_r = sum(r for r, _, _ in border_samples) / n
+        bg_g = sum(g for _, g, _ in border_samples) / n
+        bg_b = sum(b for _, _, b in border_samples) / n
 
-        # Sample left and right edges
-        for y in range(0, height, max(1, height // 50)):
-            # Left edge
-            if img_array[y, 0, 3] > 0:
-                border_pixels.append(img_array[y, 0, :3])
-            # Right edge
-            if img_array[y, width-1, 3] > 0:
-                border_pixels.append(img_array[y, width-1, :3])
+        bg_clear_thresh_sq = BG_CLEAR_THRESH * BG_CLEAR_THRESH
 
-        # If we found border pixels, clean up matching colors
-        if len(border_pixels) > 0:
-            border_pixels = np.array(border_pixels)
-            bg_color = np.median(border_pixels, axis=0)
+        def is_bg(r, g, b):
+            dr = r - bg_r
+            dg = g - bg_g
+            db = b - bg_b
+            return (dr * dr + dg * dg + db * db) <= bg_clear_thresh_sq
 
-            # Calculate color distance from background
-            rgb = img_array[:, :, :3].astype(float)
-            alpha = img_array[:, :, 3]
+        out = Image.new("RGBA", (w, h))
+        out_pixels = out.load()
 
-            # Calculate color distance for ALL pixels (including semi-transparent)
-            color_dist = np.sqrt(np.sum((rgb - bg_color)**2, axis=2))
+        for y in range(h):
+            for x in range(w):
+                r, g, b, a = pixels[x, y]
+                if a <= 0:
+                    out_pixels[x, y] = (r, g, b, 0)
+                elif is_bg(r, g, b):
+                    out_pixels[x, y] = (r, g, b, 0)
+                else:
+                    out_pixels[x, y] = (r, g, b, a)
 
-            # More aggressive cleanup:
-            # 1. Remove fully/mostly opaque pixels close to background color
-            BG_CLEANUP_THRESH = 50  # Slightly more forgiving threshold
-            opaque_cleanup = (color_dist < BG_CLEANUP_THRESH) & (alpha > 20)
+        buf = BytesIO()
+        out.save(buf, format="PNG", compress_level=0, optimize=False)
+        return buf.getvalue()
 
-            # 2. Remove semi-transparent pixels that are grayish or close to background
-            #    These are the weird gray artifacts rembg leaves behind
-            semi_transparent = (alpha > 0) & (alpha < 200)
-            is_grayish = (color_dist < 80)  # More aggressive for semi-transparent
-            semi_cleanup = semi_transparent & is_grayish
-
-            # Combine both cleanup masks
-            cleanup_mask = opaque_cleanup | semi_cleanup
-            img_array[cleanup_mask, 3] = 0  # Make transparent
-
-            print(f"[INFO] Cleaned up {np.sum(cleanup_mask)} background/artifact pixels")
-
-        # Convert back to image
-        cleaned_img = Image.fromarray(img_array, mode="RGBA")
-        buffer = BytesIO()
-        cleaned_img.save(buffer, format="PNG")
-        return buffer.getvalue()
-
-    except ImportError:
-        print("[WARN] rembg not installed. Falling back to legacy threshold method.")
-        print("[WARN] Install with: pip install 'rembg>=2.0.57'")
-        from .background_removal_legacy import strip_background_legacy
-        return strip_background_legacy(image_bytes)
     except Exception as e:
-        print(f"[WARN] rembg failed ({e}), falling back to legacy method...")
-        from .background_removal_legacy import strip_background_legacy
-        return strip_background_legacy(image_bytes)
+        print(f"  [WARN] strip_background failed, returning original bytes: {e}")
+        return image_bytes
 
 
 # =============================================================================
@@ -277,21 +243,23 @@ def strip_background(image_bytes: bytes) -> bytes:
 def _call_gemini_with_parts(
     api_key: str,
     parts: List[dict],
-    context: str
+    context: str,
+    strip_bg: bool = True,
 ) -> bytes:
     """
     Call Gemini API with custom parts array and retry logic.
 
     Handles retries for transient errors (429, 500, 502, 503, 504).
-    Strips background from returned image.
+    Optionally strips background from returned image.
 
     Args:
         api_key: Google Gemini API key.
         parts: List of content parts (text, images, etc.).
         context: Description of the operation for error messages.
+        strip_bg: Whether to strip background (True for automatic mode, False for manual mode).
 
     Returns:
-        Image bytes with background stripped.
+        Image bytes, optionally with background stripped.
 
     Raises:
         RuntimeError: If API call fails after all retries.
@@ -324,7 +292,15 @@ def _call_gemini_with_parts(
             raw_bytes = _extract_inline_image_from_response(data)
 
             if raw_bytes is not None:
-                return strip_background(raw_bytes)
+                # Only strip background if in automatic mode
+                if strip_bg:
+                    return strip_background(raw_bytes)
+                else:
+                    return raw_bytes
+
+            # Log the full response to diagnose why there's no image
+            print(f"[DEBUG] Gemini response without image data:")
+            print(f"[DEBUG] Full response: {json.dumps(data, indent=2)}")
 
             last_error = f"No image data in Gemini response ({context})."
             if attempt < max_retries:
@@ -348,7 +324,7 @@ def _call_gemini_with_parts(
             )
 
 
-def call_gemini_image_edit(api_key: str, prompt: str, image_b64: str) -> bytes:
+def call_gemini_image_edit(api_key: str, prompt: str, image_b64: str, strip_bg: bool = True) -> bytes:
     """
     Call Gemini image model with an input image and text prompt for editing.
 
@@ -356,6 +332,7 @@ def call_gemini_image_edit(api_key: str, prompt: str, image_b64: str) -> bytes:
         api_key: Google Gemini API key.
         prompt: Text prompt describing the desired edit.
         image_b64: Base64-encoded input image.
+        strip_bg: Whether to strip background (True for automatic mode, False for manual mode).
 
     Returns:
         Generated/edited image bytes.
@@ -364,13 +341,14 @@ def call_gemini_image_edit(api_key: str, prompt: str, image_b64: str) -> bytes:
         {"text": prompt},
         {"inline_data": {"mime_type": "image/png", "data": image_b64}},
     ]
-    return _call_gemini_with_parts(api_key, parts, "image_edit")
+    return _call_gemini_with_parts(api_key, parts, "image_edit", strip_bg)
 
 
 def call_gemini_text_or_refs(
     api_key: str,
     prompt: str,
-    ref_images: Optional[List[Path]] = None
+    ref_images: Optional[List[Path]] = None,
+    strip_bg: bool = True,
 ) -> bytes:
     """
     Call Gemini with a text prompt and optional reference images.
@@ -382,6 +360,7 @@ def call_gemini_text_or_refs(
         api_key: Google Gemini API key.
         prompt: Text prompt describing what to generate.
         ref_images: Optional list of reference image paths for style guidance.
+        strip_bg: Whether to strip background (True for automatic mode, False for manual mode).
 
     Returns:
         Generated image bytes.
@@ -399,4 +378,4 @@ def call_gemini_text_or_refs(
             except Exception as e:
                 print(f"[WARN] Could not load reference image {ref_path}: {e}")
 
-    return _call_gemini_with_parts(api_key, parts, "text_or_refs")
+    return _call_gemini_with_parts(api_key, parts, "text_or_refs", strip_bg)

@@ -24,6 +24,7 @@ from .dialogs import (
 from .review_windows import (
     review_images_for_step,
     review_initial_base_pose,
+    click_to_remove_background,
 )
 
 __all__ = [
@@ -42,4 +43,5 @@ __all__ = [
     # Review windows
     "review_images_for_step",
     "review_initial_base_pose",
+    "click_to_remove_background",
 ]
