@@ -35,6 +35,19 @@ LINE_COLOR = "#00E5FF"
 WINDOW_MARGIN = 10
 WRAP_PADDING = 40
 
+# New wizard UI constants
+PAGE_TITLE_FONT = ("Arial", 18, "bold")
+SECTION_FONT = ("Arial", 14, "bold")
+BODY_FONT = ("Arial", 11)
+BUTTON_FONT = ("Arial", 10)
+
+# Color scheme
+PRIMARY_COLOR = "#0066CC"      # Blue for primary actions
+SECONDARY_COLOR = "#666666"    # Gray for secondary text
+DANGER_COLOR = "#CC0000"       # Red for destructive actions
+SUCCESS_COLOR = "#00AA00"      # Green for completion
+HIGHLIGHT_COLOR = "#00E5FF"    # Cyan for interactive elements (same as LINE_COLOR)
+
 # Outfit keys:
 # Base is always included by the pipeline, but you can choose which additional
 # outfits to generate. These keys should match outfit_key values in the CSV.

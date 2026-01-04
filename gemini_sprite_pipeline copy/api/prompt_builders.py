@@ -52,11 +52,13 @@ def build_initial_pose_prompt(gender_style: str, archetype_label: str = "", back
     """
     bg = background_color.split("(")[0].strip()  # Extract color name (magenta or black)
     return (
-        f"Edit the image of the character, to have a pure, single color, flat {bg} background behind the character, and make sure the character, outfit, and hair have none of the background color on them."
-        f"Ensure the character's appearance matches a {archetype_label} - their age and features should be appropriate for this archetype. Please edit the character if they are not already a {archetype_label}, to match being a {archetype_label}. "
+        f"Edit the image of the character, to give them a pure, flat, {background_color} background behind them."
+        f"Use a pure, single color, flat {background_color} background behind the character, and make sure the character, outfit, and hair have none of the background color on them. If the character has {bg} on them, slightly change those pixels to something farther away from the new background color, {bg}."
+        f"Make sure that the character, outfit, or hair end up with none of the {bg} background color on them. "
+        f"Ensure the character's appearance matches a {archetype_label} - their age and features should be appropriate for this archetype. Do not change the art style. "
         "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
-        "Keep the crop the same from the mid-thigh on up, no matter what."
-        "Finally, don't change the overall art style of the character."
+        "Keep the crop the same from the mid-thigh on up."
+        f"Dont change the art style either, just edit the background that the character is on, to be that {bg} color."
     )
 
 

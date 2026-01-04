@@ -148,6 +148,7 @@ def process_single_character(
             image_path,
             a_base_stem,
             gender_style,
+            archetype_label,
             background_color,
         )
 
