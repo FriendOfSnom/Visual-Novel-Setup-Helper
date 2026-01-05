@@ -72,7 +72,7 @@ PY
 # --- Go to repo root
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
-print_header "ST Downloader and Organizer — macOS Launcher"
+print_header "Visual Novel Development Toolkit — macOS Launcher"
 echo "Working directory: $SCRIPT_DIR"
 
 # --- Homebrew ahead of pyenv
@@ -190,7 +190,7 @@ fi
 echo
 
 # --- Launch
-print_header "Launching the pipeline controller"
-python pipeline_runner.py
+print_header "Launching the toolkit"
+python src/main.py
 
 echo; echo "Done."

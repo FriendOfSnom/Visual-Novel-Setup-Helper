@@ -1,14 +1,30 @@
+# Virtual environment
 venv/
+
+# IDE and editor
 .claude/
-renpy-8.5.0-sdk/
+.vscode/
+*.code-workspace
+
+# Ren'Py SDK (downloaded on demand)
+renpy-*-sdk/
+
+# External projects
 student-transfer/
+
+# Legacy/archived code
 Old_Files/
 
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 
-# Test artifacts
-Test 1/
-nul
+# Test artifacts and temp files
+Test*/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

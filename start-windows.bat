@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 
 echo =================================
-echo  ST Downloader and Organizer
+echo  Visual Novel Development Toolkit
 echo  Windows Startup Script
 echo =================================
 
@@ -37,24 +37,17 @@ if errorlevel 1 goto err_pip_install
 
 echo Dependencies are up to date.
 
-rem --- optional upscaler path (no parens, no blocks)
-set "APP_ROOT=%~dp0"
-set "ESRGAN_BIN=%APP_ROOT%Windows_Helper\realesrgan\realesrgan-ncnn-vulkan.exe"
-if exist "%ESRGAN_BIN%" set "REAL_ESRGAN_BIN=%ESRGAN_BIN%"
-if exist "%ESRGAN_BIN%" echo Found bundled upscaler: "%REAL_ESRGAN_BIN%"
-if not exist "%ESRGAN_BIN%" echo Bundled upscaler not found (optional). Downscale-only runs will still work.
-
-rem --- run the pipeline
-echo Launching the pipeline controller...
-python -X dev -u "pipeline_runner.py"
+rem --- run the main menu
+echo Launching the toolkit...
+python -X dev -u "src\main.py"
 set "RC=%ERRORLEVEL%"
-echo pipeline_runner.py exited with code %RC%
+echo main.py exited with code %RC%
 
 rem --- deactivate venv (best effort)
 call venv\Scripts\deactivate >nul 2>&1
 
 if "%RC%"=="0" goto ok
-echo [ERROR] Pipeline returned a non-zero exit code.
+echo [ERROR] Toolkit returned a non-zero exit code.
 pause
 exit /b %RC%
 

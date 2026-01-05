@@ -216,35 +216,86 @@ label start:
 
 ---
 
+## Running Your Game
+
+### Method 1: Using Ren'Py SDK Launcher (Recommended)
+
+1. **Open the Ren'Py SDK:**
+   - Navigate to: `renpy-8.5.0-sdk/`
+   - Windows: Double-click `renpy.exe`
+   - Mac/Linux: Run `./renpy.sh`
+
+2. **Select Your Project:**
+   - Your project will appear in the left panel
+   - Click on your project name to select it
+
+3. **Launch the Game:**
+   - Click the **"Launch Project"** button
+   - Your game will start in a new window
+
+### During Development
+
+**Testing Changes:**
+- Save your script file
+- Press **Shift+R** in the running game to reload
+- Or restart the game from the SDK launcher
+
+**Common Shortcuts in Game:**
+- `Shift+R` - Reload game (after script changes)
+- `Shift+D` - Developer menu
+- `Shift+O` - Console
+- `Esc` - Main menu
+
+### Building for Distribution
+
+Once your game is complete:
+1. Open Ren'Py SDK
+2. Select your project
+3. Click **"Build Distributions"**
+4. Select platforms (Windows, Mac, Linux, etc.)
+5. Click "Build"
+
+This creates standalone executables in `YourProject-dists/` that players can run without Ren'Py.
+
+---
+
 ## Project Structure
 
 ```
 Visual-Novel-Development-Toolkit/
-├── gemini_sprite_pipeline/        # Tool 2: Character Creator modules
-│   ├── core/                      # Core generation logic
-│   ├── ui/                        # Tkinter UI components
-│   ├── processing/                # Image processing
-│   └── utils/                     # Utilities
-├── renpy_template/                # Character system template files
-│   └── game/
-│       ├── character.py           # Character loading system
-│       ├── body.py                # Body/Pose/Expression classes
-│       ├── char_sprites.py        # Person/Ghost sprite classes
-│       ├── pymage_size.py         # Image utilities
-│       └── effects.rpy            # Custom transforms & animations
+├── src/                           # Source code
+│   ├── main.py                    # Main launcher (menu system)
+│   │
+│   ├── renpy_scaffolder/          # Tool 1: Project Scaffolder
+│   │   ├── scaffolder.py          # Main scaffolder logic
+│   │   ├── sdk_downloader.py      # SDK download helper
+│   │   └── templates/             # Character system template files
+│   │       ├── character.py       # Character loading system
+│   │       ├── body.py            # Body/Pose/Expression classes
+│   │       ├── char_sprites.py    # Person/Ghost sprite classes
+│   │       ├── pymage_size.py     # Image utilities
+│   │       └── effects.rpy        # Custom transforms & animations
+│   │
+│   ├── sprite_creator/            # Tool 2: Gemini Character Creator
+│   │   ├── pipeline.py            # Main orchestrator
+│   │   ├── constants.py           # Configuration and constants
+│   │   ├── expression_sheets.py   # Expression sheet generator
+│   │   ├── api/                   # Gemini API integration
+│   │   ├── processing/            # Image processing workflows
+│   │   ├── ui/                    # Tkinter UI components
+│   │   └── data/                  # Data files
+│   │       ├── names.csv          # Name pools for random generation
+│   │       ├── outfit_prompts.csv # 1500+ outfit descriptions
+│   │       └── reference_sprites/ # Reference characters for scaling
+│   │
+│   └── vn_writer/                 # Tool 3: VN Writer (Scene Editor)
+│       └── editor.py              # Visual scene editor
+│
 ├── renpy-8.5.0-sdk/               # Ren'Py SDK (downloaded automatically)
-├── reference_sprites/             # Reference characters for scaling
-├── models/                        # Gemini model configurations
-├── pipeline_runner.py             # Main launcher (menu system)
-├── renpy_project_scaffolder.py    # Tool 1: Project creator
-├── expression_sheet_maker.py      # Utility: Expression sheet generator
-├── download_renpy_sdk.py          # SDK downloader
 ├── requirements.txt               # Python dependencies
 ├── start-windows.bat              # Windows launcher
 ├── start-mac.command              # macOS launcher
 └── README.md                      # This file
-
-Note: Tool 3 (Visual Scene Editor) is planned for future development.
 ```
 
 ---
