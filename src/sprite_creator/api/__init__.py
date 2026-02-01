@@ -15,7 +15,11 @@ from .gemini_client import (
     load_config,
     save_config,
     interactive_api_key_setup,
-    strip_background,
+    strip_background_ai,
+    strip_background_threshold,
+    cleanup_edge_halos,
+    REMBG_EDGE_CLEANUP_TOLERANCE,
+    REMBG_EDGE_CLEANUP_PASSES,
 )
 
 from .background_removal_legacy import strip_background_legacy
@@ -41,8 +45,12 @@ __all__ = [
     "save_config",
     "interactive_api_key_setup",
     # Background removal
-    "strip_background",
+    "strip_background_ai",
+    "strip_background_threshold",
     "strip_background_legacy",
+    "cleanup_edge_halos",
+    "REMBG_EDGE_CLEANUP_TOLERANCE",
+    "REMBG_EDGE_CLEANUP_PASSES",
     # Prompt builders
     "build_initial_pose_prompt",
     "build_expression_prompt",

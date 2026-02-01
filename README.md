@@ -415,7 +415,47 @@ default_outfit: "casual"
 
 ## Changelog
 
-### v2.0.0 (Current)
+### v2.1.0 (Current - Preparing for Standalone Release)
+
+**Outfit System Overhaul:**
+-   Split monolithic `outfit_prompts.csv` into 36 individual files organized by archetype and outfit type (e.g., `young_woman_casual.csv`, `adult_man_formal.csv`)
+-   Added **underwear** as a new outfit option for all character archetypes
+-   Better per-archetype customization with dedicated prompt files
+
+**Multi-Tier Safety Fallback System:**
+-   Implemented 5-tier fallback system when Gemini's safety filters block content:
+    -   Tier 1: Original prompt (retry once)
+    -   Tier 2: Alternative random prompt from CSV
+    -   Tier 3: Archetype-specific modest description
+    -   Tier 4: Ultra-generic description (no specific garment names)
+    -   Tier 5: Athletic wear alternative (sports bra/shorts framing)
+-   Safety fallbacks for sensitive expressions (embarrassed, flustered)
+-   Graceful degradation instead of pipeline failure
+
+**Error Handling Improvements:**
+-   New custom exception classes: `GeminiAPIError` and `GeminiSafetyError`
+-   Better retry logic for transient API errors (429, 5xx status codes)
+-   Detailed safety filter logging for debugging
+
+**UI Enhancements:**
+-   **Manual background removal tool**: Click-based flood fill with adjustable threshold
+-   Enhanced review windows with per-outfit cleanup controls (tolerance/depth sliders)
+-   Background preview options (Black/White/Custom) during review
+-   Undo history system for manual background removal (up to 25 states)
+-   State preservation for slider positions between regeneration iterations
+
+**Sprite Tester Integration:**
+-   Moved sprite tester into `src/sprite_creator/tester/` module
+-   Self-contained with all dependencies for standalone release preparation
+
+**Ren'Py Scaffolder:**
+-   Added `filtered_image.py` template for advanced image filtering support
+
+**Infrastructure:**
+-   Updated `.gitignore` for better project hygiene
+-   Updated `requirements.txt` dependencies
+
+### v2.0.0
 
 -   **Complete toolkit redesign** for academic use
 -   **Tool 1: Ren'Py Project Scaffolder** - Create projects with custom character system

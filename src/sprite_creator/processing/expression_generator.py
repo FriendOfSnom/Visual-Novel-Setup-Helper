@@ -7,28 +7,145 @@ and prompt-based character generation.
 
 import random
 import sys
+from io import BytesIO
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from PIL import Image
 
-from ..constants import EXPRESSIONS_SEQUENCE, REF_SPRITES_DIR
+from ..constants import (
+    EXPRESSIONS_SEQUENCE,
+    REF_SPRITES_DIR,
+    SAFETY_FALLBACK_EXPRESSION_PROMPTS,
+)
 
+from ..api.exceptions import GeminiAPIError, GeminiSafetyError
 from ..api.gemini_client import (
     call_gemini_image_edit,
     call_gemini_text_or_refs,
     load_image_as_base64,
+    strip_background_ai,
 )
 from ..api.prompt_builders import (
     build_expression_prompt,
     build_prompt_for_idea,
 )
-from ..ui.review_windows import review_images_for_step
+from ..ui.review_windows import review_images_for_step, click_to_remove_background
 from .image_utils import (
     save_img_webp_or_png,
     save_image_bytes_as_png,
     get_reference_images_for_archetype,
 )
+
+
+def _generate_expression_with_safety_recovery(
+    api_key: str,
+    image_b64: str,
+    expr_index: int,
+    expr_key: str,
+    expr_desc: str,
+    edge_cleanup_tolerance: Optional[int] = None,
+    edge_cleanup_passes: Optional[int] = None,
+    for_interactive_review: bool = False,
+    bg_removal_mode: str = "rembg",
+) -> Union[Optional[bytes], Optional[Tuple[bytes, bytes]]]:
+    """
+    Generate expression with 2-tier safety error recovery.
+
+    Tier 1: Retry same prompt once
+    Tier 2: Use modestly worded fallback (if available)
+
+    AI background removal is automatically applied unless for_interactive_review=True,
+    in which case both original and rembg bytes are returned.
+
+    Args:
+        api_key: Gemini API key.
+        image_b64: Base64-encoded source image.
+        expr_index: Numeric index of expression (for logging).
+        expr_key: Expression key string (e.g., "7", "8").
+        expr_desc: Expression description.
+        edge_cleanup_tolerance: Custom tolerance for edge cleanup (uses default if None).
+        edge_cleanup_passes: Custom passes for edge cleanup (uses default if None).
+        for_interactive_review: If True, return (original_bytes, rembg_bytes) tuple.
+
+    Returns:
+        If for_interactive_review=False: Image bytes with transparent BG, or None if failed.
+        If for_interactive_review=True: (original_bytes, rembg_bytes) tuple, or None if failed.
+    """
+    # Use black background for clean AI removal (consistent with outfits)
+    background_color = "solid black (#000000)"
+
+    def try_generate(desc: str, tier_name: str) -> Union[Optional[bytes], Optional[Tuple[bytes, bytes]]]:
+        try:
+            prompt = build_expression_prompt(desc, background_color)
+            if for_interactive_review:
+                # Get original bytes without rembg
+                original_bytes = call_gemini_image_edit(
+                    api_key, prompt, image_b64,
+                    skip_background_removal=True,
+                )
+                if bg_removal_mode == "manual":
+                    # Manual mode: skip rembg, return original bytes for both
+                    return (original_bytes, original_bytes)
+                else:
+                    # Rembg mode: apply rembg separately (skip edge cleanup for interactive review)
+                    rembg_bytes = strip_background_ai(original_bytes, skip_edge_cleanup=True)
+                    return (original_bytes, rembg_bytes)
+            else:
+                if bg_removal_mode == "manual":
+                    # Manual mode: skip background removal entirely
+                    return call_gemini_image_edit(
+                        api_key, prompt, image_b64,
+                        skip_background_removal=True,
+                    )
+                else:
+                    return call_gemini_image_edit(
+                        api_key, prompt, image_b64,
+                        edge_cleanup_tolerance=edge_cleanup_tolerance,
+                        edge_cleanup_passes=edge_cleanup_passes,
+                    )
+        except GeminiSafetyError as e:
+            print(f"[WARN] {tier_name}: Safety error for expression {expr_index} ('{expr_key}')")
+            print(f"[WARN] Blocked description: \"{desc}\"")
+            if e.safety_ratings:
+                print(f"[WARN] Safety ratings: {e.safety_ratings}")
+            return None
+        except GeminiAPIError as e:
+            print(f"[WARN] {tier_name}: API error for expression {expr_index} ('{expr_key}'): {e}")
+            return None
+
+    # Tier 1: Try original description
+    result = try_generate(expr_desc, "Tier 1")
+    if result:
+        return result
+
+    # Tier 1 Retry: Same description, one more time
+    print(f"[INFO] Tier 1 Recovery: Retrying expression {expr_index} once...")
+    result = try_generate(expr_desc, "Tier 1 Retry")
+    if result:
+        print(f"[INFO] Tier 1 Recovery: Retry succeeded")
+        return result
+
+    print(f"[WARN] Tier 1 Recovery: Retry failed for expression {expr_index}")
+
+    # Tier 2: Use fallback description (if available)
+    fallback = SAFETY_FALLBACK_EXPRESSION_PROMPTS.get(expr_key)
+    if fallback:
+        print(f"[INFO] Tier 2 Recovery: Using modest fallback for expression {expr_index}")
+        print(f"[INFO] Fallback description: \"{fallback}\"")
+
+        result = try_generate(fallback, "Tier 2")
+        if result:
+            print(f"[INFO] Tier 2 Recovery: Fallback succeeded")
+            return result
+
+        print(f"[WARN] Tier 2 Recovery: Fallback also blocked")
+    else:
+        print(f"[INFO] Tier 2 Recovery: No fallback available for expression {expr_index}")
+
+    # All attempts failed
+    print(f"[WARN] Skipping expression {expr_index} - all recovery attempts failed")
+    return None
 
 
 def generate_expressions_for_single_outfit_once(
@@ -37,8 +154,11 @@ def generate_expressions_for_single_outfit_once(
     outfit_path: Path,
     faces_root: Path,
     expressions_sequence: Optional[List[Tuple[str, str]]] = None,
-    background_color: str = "magenta (#FF00FF)",
-) -> List[Path]:
+    edge_cleanup_tolerance: Optional[int] = None,
+    edge_cleanup_passes: Optional[int] = None,
+    for_interactive_review: bool = False,
+    bg_removal_mode: str = "rembg",
+) -> Union[List[Path], Tuple[List[Path], List[Tuple[bytes, bytes]]]]:
     """
     Generate a full expression set for a single outfit in a single pose.
 
@@ -49,6 +169,7 @@ def generate_expressions_for_single_outfit_once(
         a/faces/Formal/0.webp ... N.webp
 
     0.webp is always the neutral outfit image itself.
+    AI background removal is automatically applied.
 
     Args:
         api_key: Gemini API key.
@@ -56,18 +177,25 @@ def generate_expressions_for_single_outfit_once(
         outfit_path: Path to outfit image.
         faces_root: Root directory for face images.
         expressions_sequence: List of (key, description) tuples for expressions.
-        background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
+        edge_cleanup_tolerance: Custom tolerance for edge cleanup (uses default if None).
+        edge_cleanup_passes: Custom passes for edge cleanup (uses default if None).
+        for_interactive_review: If True, return (paths, cleanup_data) for manual BG removal.
 
     Returns:
-        List of paths to generated expression images.
+        If for_interactive_review=False: List of paths to expression images.
+        If for_interactive_review=True: (paths, cleanup_data) where cleanup_data is
+            list of (original_bytes, rembg_bytes) tuples.
     """
     faces_root.mkdir(parents=True, exist_ok=True)
     if expressions_sequence is None:
         expressions_sequence = EXPRESSIONS_SEQUENCE
 
     generated_paths: List[Path] = []
+    cleanup_data: List[Tuple[bytes, bytes]] = []
 
     if not outfit_path.is_file() or outfit_path.suffix.lower() not in (".png", ".webp"):
+        if for_interactive_review:
+            return (generated_paths, cleanup_data)
         return generated_paths
 
     outfit_name = outfit_path.stem
@@ -97,23 +225,46 @@ def generate_expressions_for_single_outfit_once(
     generated_paths.append(neutral_path)
     print(f"  [Expr] Using outfit as neutral '0' -> {neutral_path}")
 
+    # For neutral (0), the "original" is the outfit bytes (already has transparent BG)
+    if for_interactive_review:
+        outfit_bytes = outfit_path.read_bytes()
+        cleanup_data.append((outfit_bytes, outfit_bytes))  # Same bytes for both
+
     # Generate remaining expressions
     image_b64 = load_image_as_base64(outfit_path)
-    # Strip background only in automatic mode (magenta)
-    strip_bg = (background_color == "magenta (#FF00FF)")
 
     for idx, (orig_key, desc) in enumerate(expressions_sequence[1:], start=1):
         out_stem = out_dir / str(idx)
-        prompt = build_expression_prompt(desc, background_color)
-        img_bytes = call_gemini_image_edit(api_key, prompt, image_b64, strip_bg)
-        final_path = save_image_bytes_as_png(img_bytes, out_stem)
 
-        generated_paths.append(final_path)
-        print(
-            f"  [Expr] Saved {pose_dir.name}/{outfit_name} "
-            f"expression '{orig_key}' as '{idx}' -> {final_path}"
+        result = _generate_expression_with_safety_recovery(
+            api_key,
+            image_b64,
+            idx,
+            orig_key,
+            desc,
+            edge_cleanup_tolerance=edge_cleanup_tolerance,
+            edge_cleanup_passes=edge_cleanup_passes,
+            for_interactive_review=for_interactive_review,
+            bg_removal_mode=bg_removal_mode,
         )
 
+        if result:
+            if for_interactive_review:
+                original_bytes, rembg_bytes = result
+                final_path = save_image_bytes_as_png(rembg_bytes, out_stem)
+                generated_paths.append(final_path)
+                cleanup_data.append((original_bytes, rembg_bytes))
+            else:
+                final_path = save_image_bytes_as_png(result, out_stem)
+                generated_paths.append(final_path)
+            print(
+                f"  [Expr] Saved {pose_dir.name}/{outfit_name} "
+                f"expression '{orig_key}' as '{idx}' -> {final_path}"
+            )
+        # If result is None, expression was skipped (already logged by helper)
+
+    if for_interactive_review:
+        return (generated_paths, cleanup_data)
     return generated_paths
 
 
@@ -123,7 +274,9 @@ def regenerate_single_expression(
     out_dir: Path,
     expressions_sequence: List[Tuple[str, str]],
     expr_index: int,
-    background_color: str = "magenta (#FF00FF)",
+    edge_cleanup_tolerance: Optional[int] = None,
+    edge_cleanup_passes: Optional[int] = None,
+    bg_removal_mode: str = "rembg",
 ) -> Path:
     """
     Regenerate a single expression image for one outfit.
@@ -131,16 +284,19 @@ def regenerate_single_expression(
     expr_index is the numeric index into expressions_sequence and also
     the filename stem (0, 1, 2, ...).
 
+    AI background removal is automatically applied.
+
     Args:
         api_key: Gemini API key.
         outfit_path: Path to outfit image.
         out_dir: Directory to save expression.
         expressions_sequence: List of expression definitions.
         expr_index: Index of expression to regenerate.
-        background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
+        edge_cleanup_tolerance: Custom tolerance for edge cleanup (uses default if None).
+        edge_cleanup_passes: Custom passes for edge cleanup (uses default if None).
 
     Returns:
-        Path to regenerated expression image.
+        Path to regenerated expression image with transparent background.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -155,20 +311,34 @@ def regenerate_single_expression(
     if expr_index < 0 or expr_index >= len(expressions_sequence):
         raise ValueError(f"Expression index {expr_index} out of range.")
 
-    _, desc = expressions_sequence[expr_index]
+    expr_key, desc = expressions_sequence[expr_index]
 
     image_b64 = load_image_as_base64(outfit_path)
     out_stem = out_dir / str(expr_index)
-    prompt = build_expression_prompt(desc, background_color)
-    # Strip background only in automatic mode (magenta)
-    strip_bg = (background_color == "magenta (#FF00FF)")
-    img_bytes = call_gemini_image_edit(api_key, prompt, image_b64, strip_bg)
-    final_path = save_image_bytes_as_png(img_bytes, out_stem)
-    print(
-        f"  [Expr] Regenerated expression index {expr_index} "
-        f"for '{outfit_path.stem}' -> {final_path}"
+
+    img_bytes = _generate_expression_with_safety_recovery(
+        api_key,
+        image_b64,
+        expr_index,
+        expr_key,
+        desc,
+        edge_cleanup_tolerance=edge_cleanup_tolerance,
+        edge_cleanup_passes=edge_cleanup_passes,
+        bg_removal_mode=bg_removal_mode,
     )
-    return final_path
+
+    if img_bytes:
+        final_path = save_image_bytes_as_png(img_bytes, out_stem)
+        print(
+            f"  [Expr] Regenerated expression index {expr_index} "
+            f"for '{outfit_path.stem}' -> {final_path}"
+        )
+        return final_path
+    else:
+        # All recovery attempts failed - raise error for user-initiated regeneration
+        raise GeminiSafetyError(
+            f"Expression {expr_index} could not be generated - all recovery attempts failed"
+        )
 
 
 def generate_and_review_expressions_for_pose(
@@ -177,7 +347,8 @@ def generate_and_review_expressions_for_pose(
     pose_dir: Path,
     pose_label: str,
     expressions_sequence: List[Tuple[str, str]],
-    background_color: str = "magenta (#FF00FF)",
+    cleanup_settings: Optional[Dict[Path, Tuple[int, int]]] = None,
+    bg_removal_modes: Optional[Dict[Path, str]] = None,
 ) -> None:
     """
     For a given pose directory (e.g., 'a'), iterate each outfit and:
@@ -190,13 +361,16 @@ def generate_and_review_expressions_for_pose(
           * Regenerate a single expression via buttons under each image,
           * Cancel the whole pipeline.
 
+    AI background removal is automatically applied.
+
     Args:
         api_key: Gemini API key.
         char_dir: Character directory.
         pose_dir: Pose directory.
         pose_label: Pose label for display.
         expressions_sequence: List of expression definitions.
-        background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
+        cleanup_settings: Optional dict mapping outfit path to (tolerance, passes) tuple.
+            If provided, the settings are used for edge cleanup on generated expressions.
     """
     outfits_dir = pose_dir / "outfits"
     faces_root = pose_dir / "faces"
@@ -211,21 +385,40 @@ def generate_and_review_expressions_for_pose(
 
         outfit_name = outfit_path.stem
 
-        # First, build the full expression set once
-        generate_expressions_for_single_outfit_once(
-            api_key,
-            pose_dir,
-            outfit_path,
-            faces_root,
-            expressions_sequence=expressions_sequence,
-            background_color=background_color,
-        )
+        # Get cleanup settings for this outfit (if provided)
+        outfit_tolerance = None
+        outfit_passes = None
+        if cleanup_settings and outfit_path in cleanup_settings:
+            outfit_tolerance, outfit_passes = cleanup_settings[outfit_path]
+            print(f"  [INFO] Using cleanup settings for {outfit_name}: tolerance={outfit_tolerance}, passes={outfit_passes}")
+
+        # Get background removal mode for this outfit
+        outfit_mode = bg_removal_modes.get(outfit_path, "rembg") if bg_removal_modes else "rembg"
+        if outfit_mode == "manual":
+            print(f"  [INFO] Using manual background removal mode for {outfit_name}")
 
         # Determine the folder where the expression images for this outfit live
         if outfit_name.lower() == "base":
             out_dir = faces_root / "face"
         else:
             out_dir = faces_root / outfit_name
+
+        # First, build the full expression set once (with cleanup_data for manual BG removal)
+        result = generate_expressions_for_single_outfit_once(
+            api_key,
+            pose_dir,
+            outfit_path,
+            faces_root,
+            expressions_sequence=expressions_sequence,
+            edge_cleanup_tolerance=outfit_tolerance,
+            edge_cleanup_passes=outfit_passes,
+            for_interactive_review=True,
+            bg_removal_mode=outfit_mode,
+        )
+        expr_paths_initial, expr_cleanup_data = result
+
+        # Build mapping from path to cleanup_data index
+        path_to_cleanup_idx: Dict[Path, int] = {p: i for i, p in enumerate(expr_paths_initial)}
 
         while True:
             # Collect current expression images from disk, sorted by index
@@ -249,10 +442,28 @@ def generate_and_review_expressions_for_pose(
                 for p in expr_paths
             ]
 
-            # One "regenerate this expression" button under each expression
-            per_buttons: List[List[Tuple[str, str]]] = [
-                [("Regenerate this expression", "regen_expr")] for _ in expr_paths
-            ]
+            # Build cleanup_data list matching current expr_paths order
+            review_cleanup_data: List[Tuple[bytes, bytes]] = []
+            for p in expr_paths:
+                cleanup_idx = path_to_cleanup_idx.get(p)
+                if cleanup_idx is not None and cleanup_idx < len(expr_cleanup_data):
+                    review_cleanup_data.append(expr_cleanup_data[cleanup_idx])
+                else:
+                    # Fallback: use current file bytes for both
+                    fallback_bytes = p.read_bytes()
+                    review_cleanup_data.append((fallback_bytes, fallback_bytes))
+
+            # Buttons under each expression based on outfit mode
+            if outfit_mode == "rembg":
+                per_buttons: List[List[Tuple[str, str]]] = [
+                    [("Regen expression", "regen_expr"), ("Cleanup BG", "edit_bg")]
+                    for _ in expr_paths
+                ]
+            else:
+                per_buttons: List[List[Tuple[str, str]]] = [
+                    [("Regen expression", "regen_expr"), ("Manual BG removal", "use_original_manual")]
+                    for _ in expr_paths
+                ]
 
             decision = review_images_for_step(
                 infos,
@@ -263,54 +474,100 @@ def generate_and_review_expressions_for_pose(
                 ),
                 per_item_buttons=per_buttons,
                 show_global_regenerate=True,
+                compact_mode=True,
+                show_background_preview=True,
+                # No cleanup_data = no sliders (cleanup settings decided at outfit stage)
             )
 
             choice = decision.get("choice")
 
             if choice == "accept":
+                # Save final bytes with any cleanup settings
+                final_bytes_list = decision.get("final_bytes")
+                if final_bytes_list:
+                    for i, path in enumerate(expr_paths):
+                        if i < len(final_bytes_list):
+                            path.write_bytes(final_bytes_list[i])
                 break
             if choice == "cancel":
                 sys.exit(0)
 
             if choice == "regenerate_all":
                 # Wipe and rebuild the whole expression set for this outfit
-                generate_expressions_for_single_outfit_once(
+                result = generate_expressions_for_single_outfit_once(
                     api_key,
                     pose_dir,
                     outfit_path,
                     faces_root,
                     expressions_sequence=expressions_sequence,
-                    background_color=background_color,
+                    edge_cleanup_tolerance=outfit_tolerance,
+                    edge_cleanup_passes=outfit_passes,
+                    for_interactive_review=True,
+                    bg_removal_mode=outfit_mode,
                 )
+                expr_paths_initial, expr_cleanup_data = result
+                path_to_cleanup_idx = {p: i for i, p in enumerate(expr_paths_initial)}
                 continue
 
             if choice == "per_item":
                 idx_obj = decision.get("index")
+                action = decision.get("action")
                 if idx_obj is None:
                     continue
                 idx = int(idx_obj)
                 if idx < 0 or idx >= len(expr_paths):
                     continue
 
-                # Card index -> expression index: the filename stem
-                try:
-                    expr_index = int(expr_paths[idx].stem)
-                except ValueError:
+                # Handle edit background action
+                if action == "edit_bg":
+                    expr_path = expr_paths[idx]
+                    # Launch click-to-remove tool for manual background editing
+                    click_to_remove_background(expr_path, threshold=30)
+                    # Image is updated in-place if user accepted; refresh UI
                     continue
 
-                if expr_index < 0 or expr_index >= len(expressions_sequence):
+                # Handle regenerate action (with automatic BG removal)
+                if action == "regen_expr":
+                    try:
+                        expr_index = int(expr_paths[idx].stem)
+                    except ValueError:
+                        continue
+
+                    if expr_index < 0 or expr_index >= len(expressions_sequence):
+                        continue
+
+                    regenerate_single_expression(
+                        api_key,
+                        outfit_path,
+                        out_dir,
+                        expressions_sequence,
+                        expr_index,
+                        edge_cleanup_tolerance=outfit_tolerance,
+                        edge_cleanup_passes=outfit_passes,
+                        bg_removal_mode=outfit_mode,
+                    )
+                    # Loop to show the updated images
                     continue
 
-                regenerate_single_expression(
-                    api_key,
-                    outfit_path,
-                    out_dir,
-                    expressions_sequence,
-                    expr_index,
-                    background_color,
-                )
-                # Loop to show the updated images
-                continue
+                # Handle manual BG removal using saved original bytes (no Gemini call)
+                if action == "use_original_manual":
+                    expr_path = expr_paths[idx]
+                    cleanup_idx = path_to_cleanup_idx.get(expr_path)
+                    if cleanup_idx is not None and cleanup_idx < len(expr_cleanup_data):
+                        original_bytes, rembg_bytes = expr_cleanup_data[cleanup_idx]
+                        # Save original bytes (with black BG) to file for manual editing
+                        expr_path.write_bytes(original_bytes)
+                        # Open manual removal UI
+                        accepted = click_to_remove_background(expr_path, threshold=30)
+                        if accepted:
+                            # Read the manually edited result and update cleanup_data
+                            new_bytes = expr_path.read_bytes()
+                            expr_cleanup_data[cleanup_idx] = (original_bytes, new_bytes)
+                            print(f"  Applied manual BG removal: {expr_path}")
+                        else:
+                            # User cancelled - restore rembg version
+                            expr_path.write_bytes(rembg_bytes)
+                    continue
 
 
 def generate_initial_character_from_prompt(
@@ -347,7 +604,8 @@ def generate_initial_character_from_prompt(
             "Gemini will rely on the text prompt alone."
         )
 
-    full_prompt = build_prompt_for_idea(concept, archetype_label, gender_style)
+    # Use black background for clean AI removal (consistent with outfits)
+    full_prompt = build_prompt_for_idea(concept, archetype_label, gender_style, background_color="solid black (#000000)")
     print("[Gemini] Generating new character from text prompt...")
     img_bytes = call_gemini_text_or_refs(api_key, full_prompt, refs)
 

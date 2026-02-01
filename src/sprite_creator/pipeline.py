@@ -22,19 +22,24 @@ import os
 import random
 import sys
 import tkinter as tk
+from io import BytesIO
 from pathlib import Path
 from tkinter import filedialog
 from typing import Dict, List, Optional, Tuple
 
 from PIL import Image
 
-from .constants import OUTFIT_CSV_PATH, EXPRESSIONS_SEQUENCE
+from .constants import DATA_DIR, EXPRESSIONS_SEQUENCE
 
 # Import from package modules
 from .api import (
     get_api_key,
     load_outfit_prompts,
     build_outfit_prompts_with_config,
+    cleanup_edge_halos,
+    strip_background_ai,
+    REMBG_EDGE_CLEANUP_TOLERANCE,
+    REMBG_EDGE_CLEANUP_PASSES,
 )
 from .ui import (
     prompt_voice_archetype_and_name,
@@ -139,45 +144,52 @@ def process_single_character(
     a_base_stem = a_dir / "base"
 
     use_base_as_outfit = True
-    background_color = "magenta (#FF00FF)"  # Start with automatic (magenta)
 
-    # Generate and review base pose
+    # Generate normalized base pose (black background, AI removal applied)
+    a_base_path = generate_initial_pose_once(
+        api_key,
+        image_path,
+        a_base_stem,
+        gender_style,
+        archetype_label,
+    )
+
+    # Store original base image for potential reset
+    original_base_bytes = a_base_path.read_bytes()
+    has_been_regenerated = False
+
+    # Review loop for base pose (simplified - no edge cleanup controls here)
     while True:
-        a_base_path = generate_initial_pose_once(
-            api_key,
-            image_path,
-            a_base_stem,
-            gender_style,
-            archetype_label,
-            background_color,
+        choice, use_flag, additional_text = review_initial_base_pose(
+            a_base_path,
+            has_been_regenerated=has_been_regenerated,
         )
-
-        # Determine if we're currently in manual mode
-        is_manual_mode = (background_color == "black (#000000)")
-
-        choice, use_flag, switch_mode = review_initial_base_pose(a_base_path, is_manual_mode)
         use_base_as_outfit = use_flag
 
         if choice == "accept":
             break
-        if choice == "switch_mode" or switch_mode:
-            # Toggle between automatic and manual background removal modes
-            if is_manual_mode:
-                # Switch to automatic mode
-                background_color = "magenta (#FF00FF)"
-                print("[INFO] Switching to automatic background removal mode (magenta background).")
-            else:
-                # Switch to manual mode
-                background_color = "black (#000000)"
-                print("[INFO] Switching to manual background removal mode (black background).")
-            continue
+
         if choice == "regenerate":
+            a_base_path = generate_initial_pose_once(
+                api_key,
+                image_path,
+                a_base_stem,
+                gender_style,
+                archetype_label,
+                additional_instructions=additional_text,
+            )
+            has_been_regenerated = True
             continue
+
+        if choice == "reset":
+            # Restore original base image
+            a_base_path.write_bytes(original_base_bytes)
+            has_been_regenerated = False
+            print("  [INFO] Reset to original base pose")
+            continue
+
         if choice == "cancel":
             sys.exit(0)
-
-    # Determine if we're in manual mode
-    use_manual_removal = (background_color == "black (#000000)")
 
     # Generate outfits
     print("[INFO] Generating outfits for pose A...")
@@ -194,7 +206,8 @@ def process_single_character(
     )
 
     # Initial generation: make Base (if requested) and all outfits once
-    generate_outfits_once(
+    # Use interactive review mode to get cleanup data for per-outfit edge cleanup
+    outfit_paths, cleanup_data = generate_outfits_once(
         api_key,
         a_base_path,
         outfits_dir,
@@ -202,25 +215,46 @@ def process_single_character(
         current_outfit_prompts,
         outfit_prompt_config,
         archetype_label,
+        outfit_db,
         include_base_outfit=use_base_as_outfit,
-        background_color=background_color,
+        for_interactive_review=True,
     )
+
+    # Build mapping from path to index for cleanup_data updates
+    path_to_index: Dict[Path, int] = {p: i for i, p in enumerate(outfit_paths)}
+
+    # Initialize cleanup settings (will be populated on accept)
+    outfit_cleanup_settings: Dict[Path, Tuple[int, int]] = {}
+
+    # Per-outfit background removal mode: "rembg" (auto) or "manual"
+    bg_removal_mode: Dict[Path, str] = {p: "rembg" for p in outfit_paths}
+
+    # State to restore on next iteration (for preserving slider settings during regeneration)
+    restore_state: Optional[Dict[str, object]] = None
 
     # Review loop: regenerate individual outfits as needed
     while True:
         a_out_paths: List[Path] = []
         per_buttons: List[List[Tuple[str, str]]] = []
         index_to_outfit_key: Dict[int, str] = {}
+        review_cleanup_data: List[Tuple[bytes, bytes]] = []
 
-        # Collect current outfit images from disk
-        for p in sorted(outfits_dir.iterdir()):
-            if not p.is_file():
-                continue
-            if p.suffix.lower() not in (".png", ".webp"):
+        # Use tracked outfit_paths instead of scanning disk
+        for p in outfit_paths:
+            if not p.exists():
                 continue
 
             a_out_paths.append(p)
             stem_lower = p.stem.lower()
+
+            # Get the cleanup data for this outfit
+            path_idx = path_to_index.get(p)
+            if path_idx is not None and path_idx < len(cleanup_data):
+                review_cleanup_data.append(cleanup_data[path_idx])
+            else:
+                # Fallback: use same bytes for original and rembg
+                fallback_bytes = p.read_bytes()
+                review_cleanup_data.append((fallback_bytes, fallback_bytes))
 
             # Try to match this file back to one of the logical outfit keys
             matched_key: Optional[str] = None
@@ -228,21 +262,47 @@ def process_single_character(
                 if key.lower() == stem_lower or key.capitalize().lower() == stem_lower:
                     matched_key = key
                     break
+            # Also check for "Base" which isn't in selected_outfit_keys
+            if stem_lower == "base":
+                matched_key = "base"
 
-            # Decide which per-card buttons to show
+            # Decide which per-card buttons to show based on mode
             btn_list: List[Tuple[str, str]] = []
-            if matched_key is not None:
+            mode = bg_removal_mode.get(p, "rembg")
+
+            if matched_key == "base":
+                # Base outfit: no regeneration, just BG options
+                if mode == "rembg":
+                    btn_list.append(("Cleanup BG", "cleanup_bg"))
+                    btn_list.append(("Switch to Manual", "switch_manual"))
+                else:
+                    btn_list.append(("Manual BG removal", "manual_base"))
+                    btn_list.append(("Switch to Auto", "switch_auto"))
+                index_to_outfit_key[len(a_out_paths) - 1] = matched_key
+            elif matched_key is not None:
                 cfg = outfit_prompt_config.get(matched_key, {})
-                # Every logical outfit can be regenerated with the same prompt
-                btn_list.append(("Regenerate same outfit", "same"))
+                # Regeneration buttons (always shown)
+                btn_list.append(("Regen (same outfit)", "same"))
                 # "New random outfit" button only for CSV/random system
                 if not (matched_key == "uniform" and cfg.get("use_standard_uniform")):
-                    btn_list.append(("New random outfit", "new"))
+                    btn_list.append(("Regen (new outfit)", "new"))
+                # Mode-specific BG buttons
+                if mode == "rembg":
+                    btn_list.append(("Cleanup BG", "cleanup_bg"))
+                    btn_list.append(("Switch to Manual", "switch_manual"))
+                else:
+                    btn_list.append(("Manual BG removal", "manual_outfit"))
+                    btn_list.append(("Switch to Auto", "switch_auto"))
                 index_to_outfit_key[len(a_out_paths) - 1] = matched_key
 
             per_buttons.append(btn_list)
 
         a_infos = [(p, f"Pose A – {p.name}") for p in a_out_paths]
+
+        # Build index -> mode mapping for the review UI
+        index_to_mode: Dict[int, str] = {
+            i: bg_removal_mode.get(p, "rembg") for i, p in enumerate(a_out_paths)
+        }
 
         decision = review_images_for_step(
             a_infos,
@@ -250,15 +310,34 @@ def process_single_character(
             (
                 "Accept these outfits, regenerate individual outfits (random outfits will pick new "
                 "CSV prompts when you choose 'New random outfit'; custom outfits and standard "
-                "uniforms will keep the same prompt), or cancel."
+                "uniforms will keep the same prompt), or cancel.\n\n"
+                "Use the edge cleanup controls under each outfit to adjust halo removal."
             ),
             per_item_buttons=per_buttons,
             show_global_regenerate=False,
+            cleanup_data=review_cleanup_data,
+            restore_state=restore_state,
+            bg_removal_modes=index_to_mode,
         )
 
         choice = decision.get("choice")
 
         if choice == "accept":
+            # Save final bytes with user's cleanup settings
+            final_bytes_list = decision.get("final_bytes")
+            if final_bytes_list:
+                for i, path in enumerate(a_out_paths):
+                    if i < len(final_bytes_list):
+                        path.write_bytes(final_bytes_list[i])
+                        print(f"  Saved edge-cleaned outfit to: {path}")
+
+            # Capture cleanup settings to pass to expression generation
+            outfit_cleanup_settings: Dict[Path, Tuple[int, int]] = {}
+            cleanup_settings_list = decision.get("cleanup_settings")
+            if cleanup_settings_list:
+                for i, path in enumerate(a_out_paths):
+                    if i < len(cleanup_settings_list):
+                        outfit_cleanup_settings[path] = cleanup_settings_list[i]
             break
         if choice == "cancel":
             sys.exit(0)
@@ -269,8 +348,127 @@ def process_single_character(
             if idx is None or action is None:
                 continue
 
+            # Capture state to restore on next iteration (preserves slider settings for OTHER outfits)
+            restore_state = {
+                "cleanup_settings": decision.get("cleanup_settings"),
+                "current_bytes": decision.get("current_bytes"),
+                "background_selection": decision.get("background_selection"),
+            }
+
             outfit_key = index_to_outfit_key.get(int(idx))
             if not outfit_key:
+                continue
+
+            # Cleanup BG: touch-up existing transparent image (for rembg mode)
+            if action == "cleanup_bg":
+                old_path = a_out_paths[idx]
+                # Open click_to_remove on current bytes for touch-up
+                accepted = click_to_remove_background(old_path, threshold=30)
+                if accepted:
+                    new_bytes = old_path.read_bytes()
+                    path_idx = path_to_index.get(old_path)
+                    if path_idx is not None:
+                        original_bytes, _ = cleanup_data[path_idx]
+                        cleanup_data[path_idx] = (original_bytes, new_bytes)
+                    if restore_state and restore_state.get("current_bytes"):
+                        if idx < len(restore_state["current_bytes"]):
+                            restore_state["current_bytes"][idx] = new_bytes
+                    print(f"  Applied BG cleanup: {old_path}")
+                continue
+
+            # Switch to Manual mode: revert to original (black bg) and change mode
+            if action == "switch_manual":
+                old_path = a_out_paths[idx]
+                path_idx = path_to_index.get(old_path)
+                if path_idx is not None and path_idx < len(cleanup_data):
+                    # Revert to original bytes (black background)
+                    original_bytes, _ = cleanup_data[path_idx]
+                    old_path.write_bytes(original_bytes)
+                    cleanup_data[path_idx] = (original_bytes, original_bytes)
+
+                    # Update mode tracking
+                    bg_removal_mode[old_path] = "manual"
+
+                    # Update restore_state
+                    if restore_state and restore_state.get("current_bytes"):
+                        if idx < len(restore_state["current_bytes"]):
+                            restore_state["current_bytes"][idx] = original_bytes
+
+                    print(f"  Switched to manual mode: {old_path}")
+                continue
+
+            # Switch to Auto (rembg) mode: restore rembg bytes and change mode
+            if action == "switch_auto":
+                old_path = a_out_paths[idx]
+                path_idx = path_to_index.get(old_path)
+                if path_idx is not None and path_idx < len(cleanup_data):
+                    # We need to re-run rembg on the original to get fresh rembg bytes
+                    original_bytes, _ = cleanup_data[path_idx]
+                    rembg_bytes = strip_background_ai(original_bytes, skip_edge_cleanup=True)
+                    old_path.write_bytes(rembg_bytes)
+                    cleanup_data[path_idx] = (original_bytes, rembg_bytes)
+
+                    # Update mode tracking
+                    bg_removal_mode[old_path] = "rembg"
+
+                    # Update restore_state
+                    if restore_state and restore_state.get("current_bytes"):
+                        if idx < len(restore_state["current_bytes"]):
+                            restore_state["current_bytes"][idx] = rembg_bytes
+
+                    print(f"  Switched to auto (rembg) mode: {old_path}")
+                continue
+
+            # Manual background removal for Base outfit
+            if action == "manual_base" and outfit_key == "base":
+                old_path = a_out_paths[idx]
+                path_idx = path_to_index.get(old_path)
+                if path_idx is not None and path_idx < len(cleanup_data):
+                    original_bytes, rembg_bytes = cleanup_data[path_idx]
+                    # Save original (with black bg) to the outfit path for manual editing
+                    original_img = Image.open(BytesIO(original_bytes)).convert("RGBA")
+                    original_img.save(old_path, format="PNG", compress_level=0, optimize=False)
+
+                    # Open manual removal UI (edits the file in-place)
+                    accepted = click_to_remove_background(old_path, threshold=30)
+
+                    if accepted:
+                        # Read the manually edited result
+                        new_bytes = old_path.read_bytes()
+                        cleanup_data[path_idx] = (original_bytes, new_bytes)
+                        print(f"  Applied manual background removal: {old_path}")
+                        # Update restore_state with new bytes
+                        if restore_state and restore_state.get("current_bytes"):
+                            if idx < len(restore_state["current_bytes"]):
+                                restore_state["current_bytes"][idx] = new_bytes
+                    else:
+                        # User cancelled - restore the rembg version
+                        old_path.write_bytes(rembg_bytes)
+                continue
+
+            # Manual background removal for any outfit (non-Base)
+            if action == "manual_outfit" and outfit_key != "base":
+                old_path = a_out_paths[idx]
+                path_idx = path_to_index.get(old_path)
+                if path_idx is not None and path_idx < len(cleanup_data):
+                    original_bytes, rembg_bytes = cleanup_data[path_idx]
+                    # Save original (with black bg) for manual editing
+                    original_img = Image.open(BytesIO(original_bytes)).convert("RGBA")
+                    original_img.save(old_path, format="PNG", compress_level=0, optimize=False)
+
+                    # Open manual removal UI
+                    accepted = click_to_remove_background(old_path, threshold=30)
+
+                    if accepted:
+                        new_bytes = old_path.read_bytes()
+                        cleanup_data[path_idx] = (original_bytes, new_bytes)
+                        print(f"  Applied manual background removal: {old_path}")
+                        if restore_state and restore_state.get("current_bytes"):
+                            if idx < len(restore_state["current_bytes"]):
+                                restore_state["current_bytes"][idx] = new_bytes
+                    else:
+                        # User cancelled - restore rembg version
+                        old_path.write_bytes(rembg_bytes)
                 continue
 
             # If "new" random outfit, roll a fresh prompt
@@ -297,8 +495,8 @@ def process_single_character(
                 desc = fallback_prompt_dict[outfit_key]
                 current_outfit_prompts[outfit_key] = desc
 
-            # Regenerate just this one outfit image
-            generate_single_outfit(
+            # Regenerate just this one outfit image (with interactive review)
+            result = generate_single_outfit(
                 api_key,
                 a_base_path,
                 outfits_dir,
@@ -307,8 +505,28 @@ def process_single_character(
                 desc,
                 outfit_prompt_config,
                 archetype_label,
-                background_color,
+                outfit_db,
+                for_interactive_review=True,
             )
+
+            # Update cleanup_data for this outfit
+            if result is not None:
+                new_path, new_original, new_rembg = result
+                # Find and update the entry in our tracking
+                old_path = a_out_paths[idx]
+                if old_path in path_to_index:
+                    old_idx = path_to_index[old_path]
+                    cleanup_data[old_idx] = (new_original, new_rembg)
+                    # Update path mapping if path changed
+                    if new_path != old_path:
+                        outfit_paths[old_idx] = new_path
+                        del path_to_index[old_path]
+                        path_to_index[new_path] = old_idx
+
+                # Update restore_state with new bytes so we don't restore the old image
+                if restore_state and restore_state.get("current_bytes"):
+                    if idx < len(restore_state["current_bytes"]):
+                        restore_state["current_bytes"][idx] = new_rembg
             continue
 
         # Safety: support "regenerate_all" if ever re-enabled
@@ -320,7 +538,7 @@ def process_single_character(
                 outfit_db,
                 outfit_prompt_config,
             )
-            generate_outfits_once(
+            outfit_paths, cleanup_data = generate_outfits_once(
                 api_key,
                 a_base_path,
                 outfits_dir,
@@ -328,12 +546,14 @@ def process_single_character(
                 current_outfit_prompts,
                 outfit_prompt_config,
                 archetype_label,
+                outfit_db,
                 include_base_outfit=use_base_as_outfit,
-                background_color=background_color,
+                for_interactive_review=True,
             )
+            path_to_index = {p: i for i, p in enumerate(outfit_paths)}
             continue
 
-    # Generate expressions for all outfits
+    # Generate expressions for all outfits, using the cleanup settings from outfit review
     print("[INFO] Generating expressions for pose A (per outfit)...")
     generate_and_review_expressions_for_pose(
         api_key,
@@ -341,44 +561,24 @@ def process_single_character(
         a_dir,
         "A",
         expressions_sequence=expressions_sequence,
-        background_color=background_color,
+        cleanup_settings=outfit_cleanup_settings,
+        bg_removal_modes=bg_removal_mode,
     )
-
-    # Manual background removal (if enabled)
-    if use_manual_removal:
-        print("\n[INFO] Manual background removal mode: Click to remove black backgrounds from all expressions.")
-
-        # Collect all expression images across all poses
-        all_expression_paths: List[Path] = []
-        for pose_dir in sorted(char_dir.iterdir()):
-            if not pose_dir.is_dir() or len(pose_dir.name) != 1 or not pose_dir.name.isalpha():
-                continue
-
-            faces_dir = pose_dir / "faces"
-            if not faces_dir.is_dir():
-                continue
-
-            # Collect expression images from all outfit folders
-            for expr_folder in sorted(faces_dir.iterdir()):
-                if not expr_folder.is_dir():
-                    continue
-
-                for expr_file in sorted(expr_folder.iterdir()):
-                    if expr_file.is_file() and expr_file.suffix.lower() in (".png", ".webp"):
-                        all_expression_paths.append(expr_file)
-
-        # Process each expression with click-to-remove UI
-        for expr_path in all_expression_paths:
-            print(f"\n[INFO] Manual background removal for: {expr_path.relative_to(char_dir)}")
-            click_to_remove_background(expr_path)
-
-        print("[INFO] Manual background removal completed for all expressions.")
 
     # Finalize character
     finalize_character(char_dir, display_name, voice, game_name)
 
-    # Generate expression sheets
-    generate_expression_sheets_for_root(output_root)
+    # Generate expression sheets for this character only
+    generate_expression_sheets_for_root(char_dir)
+
+    # Optional: Launch sprite tester if available
+    try:
+        from .tester import launch_sprite_tester
+        launch_sprite_tester(char_dir)
+    except ImportError:
+        pass  # Tester module not available, skip silently
+    except Exception as e:
+        print(f"[INFO] Sprite tester skipped: {e}")
 
 
 # =============================================================================
@@ -400,7 +600,7 @@ def run_pipeline(output_root: Path, game_name: Optional[str] = None) -> None:
     random.seed(int.from_bytes(os.urandom(16), "big"))
     api_key = get_api_key()
 
-    outfit_db = load_outfit_prompts(OUTFIT_CSV_PATH)
+    outfit_db = load_outfit_prompts(DATA_DIR)
     output_root.mkdir(parents=True, exist_ok=True)
 
     # Ask how we are creating the character: from an image, or from a text prompt
@@ -493,6 +693,39 @@ def run_pipeline(output_root: Path, game_name: Optional[str] = None) -> None:
                 continue
             if choice == "cancel":
                 sys.exit(0)
+
+        # === Crop step for prompt-generated character ===
+        try:
+            src_img = Image.open(src_path).convert("RGBA")
+        except Exception as e:
+            print(f"[WARN] Could not open image for cropping ({e}); using original.")
+            src_img = None
+
+        if src_img is not None:
+            crop_prompt_text = (
+                "If this sprite is not already cropped to mid-thigh, click where you "
+                "want the lower thigh-level crop line.\n\n"
+                "If it *is* already cropped the way you like, just click along the "
+                "existing bottom edge of the character."
+            )
+
+            y_cut, used_gallery = prompt_for_crop(
+                src_img,
+                crop_prompt_text,
+                previous_crops=[],
+            )
+
+            # If the user clicked somewhere above the bottom edge, crop
+            if y_cut is not None and 0 < y_cut < src_img.height:
+                cropped = src_img.crop((0, 0, src_img.width, y_cut))
+                crop_dir = output_root / "_cropped_sources"
+                crop_dir.mkdir(parents=True, exist_ok=True)
+                cropped_path = crop_dir / f"{src_path.stem}_cropped.png"
+                cropped.save(cropped_path, format="PNG", compress_level=0, optimize=False)
+                print(f"[INFO] Saved thigh-cropped source image to: {cropped_path}")
+                src_path = cropped_path
+            else:
+                print("[INFO] User kept original height; skipping pre-crop.")
 
         preselected = {
             "voice": voice,

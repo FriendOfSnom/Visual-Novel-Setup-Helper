@@ -74,14 +74,14 @@ def finalize_character(
 
 def generate_expression_sheets_for_root(root_folder: Path) -> None:
     """
-    Run expression_sheet_maker.py on the given root folder so that expression
-    sheets are generated for all characters under it.
+    Run expression_sheet_maker.py on the given folder so that expression
+    sheets are generated.
 
     This is used at the end of the pipeline so that a newly created character
     immediately has expression sheets available for Ren'Py scripting.
 
     Args:
-        root_folder: Root directory containing character folders.
+        root_folder: Character folder or root directory containing character folders.
     """
     if not root_folder.is_dir():
         print(f"[WARN] Not generating expression sheets; '{root_folder}' is not a directory.")

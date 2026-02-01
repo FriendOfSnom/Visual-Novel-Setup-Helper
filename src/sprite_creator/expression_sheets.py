@@ -6,14 +6,18 @@ expression_sheet_maker.py
 Generates expression sheet PNGs from organized sprite folders.
 
 Usage:
-    python expression_sheet_maker.py /path/to/output_folder
+    python expression_sheet_maker.py /path/to/folder
+
+The folder can be either:
+  1. A character folder (e.g., /path/to/John) containing poses (a, b, etc.)
+  2. A root folder containing multiple character folders
 
 For each character, reads its scale value from character.yml and scales all
 expressions accordingly.
 
 Saves each sheet to the *pose folder* (alongside faces/ and outfits/), e.g.:
 
-    <root>/<character>/<pose>/<pose>_sheet.png
+    <folder>/<character>/<pose>/<pose>_sheet.png
 """
 
 import os
@@ -39,9 +43,36 @@ except Exception:
 # -----------------------
 # Directory Traversal
 # -----------------------
+def is_character_folder(folder_path):
+    """
+    Check if the given folder looks like a character folder (has pose subfolders).
+
+    Args:
+        folder_path: Path to check
+
+    Returns:
+        True if this looks like a character folder (has pose dirs like 'a', 'b', etc.)
+    """
+    if not os.path.isdir(folder_path):
+        return False
+
+    # Check if it has any single-letter subdirectories with faces/face folders
+    for item in os.listdir(folder_path):
+        item_path = os.path.join(folder_path, item)
+        if os.path.isdir(item_path) and len(item) == 1 and item.isalpha():
+            faces_face_path = os.path.join(item_path, "faces", "face")
+            if os.path.isdir(faces_face_path):
+                return True
+    return False
+
+
 def get_all_pose_paths(root_folder):
     """
     Find all (character, pose, face_images_path) tuples under the given root.
+
+    Handles two cases:
+    1. root_folder is a character folder (contains pose folders like 'a', 'b')
+    2. root_folder contains multiple character folders
 
     Returns:
         list[tuple[str, str, str]]
@@ -50,19 +81,37 @@ def get_all_pose_paths(root_folder):
         face_images_path: full path to <pose>/faces/face
     """
     pose_paths = []
-    for character in sorted(os.listdir(root_folder)):
-        char_path = os.path.join(root_folder, character)
-        if not os.path.isdir(char_path):
-            continue
 
-        for pose in sorted(os.listdir(char_path)):
-            pose_path = os.path.join(char_path, pose)
+    # Check if root_folder itself is a character folder
+    if is_character_folder(root_folder):
+        character = os.path.basename(root_folder)
+        for pose in sorted(os.listdir(root_folder)):
+            pose_path = os.path.join(root_folder, pose)
             if not os.path.isdir(pose_path):
+                continue
+            if len(pose) != 1 or not pose.isalpha():
                 continue
 
             face_images_path = os.path.join(pose_path, "faces", "face")
             if os.path.isdir(face_images_path):
                 pose_paths.append((character, pose, face_images_path))
+    else:
+        # root_folder contains multiple character folders
+        for character in sorted(os.listdir(root_folder)):
+            char_path = os.path.join(root_folder, character)
+            if not os.path.isdir(char_path):
+                continue
+
+            for pose in sorted(os.listdir(char_path)):
+                pose_path = os.path.join(char_path, pose)
+                if not os.path.isdir(pose_path):
+                    continue
+                if len(pose) != 1 or not pose.isalpha():
+                    continue
+
+                face_images_path = os.path.join(pose_path, "faces", "face")
+                if os.path.isdir(face_images_path):
+                    pose_paths.append((character, pose, face_images_path))
 
     return pose_paths
 
@@ -168,11 +217,12 @@ def draw_expression_sheet(character, pose, images, output_path):
 # -----------------------
 def main():
     """
-    Walk the output root, read per-character scale, build a sheet for each pose,
+    Walk the folder (character or root), read per-character scale, build a sheet for each pose,
     and save the sheet next to that pose's faces/ and outfits/ folders.
     """
     if len(sys.argv) < 2:
-        print("Usage: python expression_sheet_maker.py /path/to/output_folder")
+        print("Usage: python expression_sheet_maker.py /path/to/folder")
+        print("  Folder can be a character folder or a root folder containing characters.")
         sys.exit(1)
 
     root_folder = sys.argv[1]
@@ -183,6 +233,8 @@ def main():
     pose_entries = get_all_pose_paths(root_folder)
     if not pose_entries:
         print("[WARN] No poses found in the specified folder.")
+        print("[WARN] Expected structure: <character>/<pose>/faces/face/*.png")
+        print(f"[WARN] Check that '{root_folder}' contains the correct folder structure.")
         sys.exit(0)
 
     # Group by character

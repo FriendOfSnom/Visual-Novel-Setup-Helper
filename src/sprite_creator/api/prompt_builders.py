@@ -10,7 +10,7 @@ import random
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..constants import OUTFIT_CSV_PATH, GENDER_ARCHETYPES
+from ..constants import GENDER_ARCHETYPES
 
 
 # =============================================================================
@@ -37,7 +37,12 @@ def archetype_to_gender_style(archetype_label: str) -> str:
 # Core Prompt Builders (DO NOT MODIFY - per user request)
 # =============================================================================
 
-def build_initial_pose_prompt(gender_style: str, archetype_label: str = "", background_color: str = "magenta (#FF00FF)") -> str:
+def build_initial_pose_prompt(
+    gender_style: str,
+    archetype_label: str = "",
+    background_color: str = "magenta (#FF00FF)",
+    additional_instructions: str = "",
+) -> str:
     """
     Prompt to normalize the original sprite (mid-thigh, specified background).
 
@@ -46,18 +51,23 @@ def build_initial_pose_prompt(gender_style: str, archetype_label: str = "", back
     Args:
         gender_style: 'f' or 'm' (currently unused but kept for signature consistency).
         background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
+        additional_instructions: Optional extra instructions to append to the prompt.
 
     Returns:
         Prompt string for initial pose normalization.
     """
     bg = background_color.split("(")[0].strip()  # Extract color name (magenta or black)
-    return (
-        f"Edit the image of the character, to have a pure, single color, flat {bg} background behind the character, and make sure the character, outfit, and hair have none of the background color on them."
-        f"Ensure the character's appearance matches a {archetype_label} - their age and features should be appropriate for this archetype. Please edit the character if they are not already a {archetype_label}, to match being a {archetype_label}. "
-        "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
+    prompt = (
+        f"Ensure the character's appearance matches a {archetype_label} - their age and features should be appropriate for this archetype. Edit the character if they are not already a {archetype_label}, to match being a {archetype_label}. "
+        "Sharpen the image to at least 720p resolution if it is lower than that and correct any artifacts of blurriness. "
+        "Don't change the size, proportions, framing, or art style of the character. "
+        f"Give the character a {bg} background behind them. "
+        "Make sure the head, arms, hair, hands, and clothes are all kept within the image. "
         "Keep the crop the same from the mid-thigh on up, no matter what."
-        "Finally, don't change the overall art style of the character."
     )
+    if additional_instructions.strip():
+        prompt += f" Additionally: {additional_instructions.strip()}"
+    return prompt
 
 
 def build_expression_prompt(expression_desc: str, background_color: str = "magenta (#FF00FF)") -> str:
@@ -75,15 +85,11 @@ def build_expression_prompt(expression_desc: str, background_color: str = "magen
     """
     bg = background_color.split("(")[0].strip()  # Extract color name (magenta or black)
     return (
-        "Edit the inputed visual novel sprite in the same art style. "
-        f"Change the facial expression and adjust the character's pose to match this description: {expression_desc}. "
+        f"Edit the character's expression and pose to match this emotion: {expression_desc}, but don't change the size, proportions, framing, or art style of the character. "
         "Keep the hair volume, hair outlines, and the hair style all the exact same. "
-        "Do not change the hairstyle, crop from the mid-thigh up, image size, lighting, or background. "
-        f"Use a pure, single color, flat {background_color} background behind the character, and make sure the character, outfit, and hair have none of the background color on them. If the character has {bg} on them, slightly change those pixels to something farther away from the new background color, {bg}."
-        "Do not have the head, arms, hair, or hands extending outside the frame."
-        "Do not crop off the head, and don't change the size or proportions of the character."
+        f"Give the character a {bg} background behind them. "
+        "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
     )
-
 
 def build_outfit_prompt(base_outfit_desc: str, gender_style: str, background_color: str = "magenta (#FF00FF)") -> str:
     """
@@ -101,15 +107,11 @@ def build_outfit_prompt(base_outfit_desc: str, gender_style: str, background_col
     """
     bg = background_color.split("(")[0].strip()  # Extract color name (magenta or black)
     return (
-        f"Edit the visual novel sprite image, in the same art style. "
-        f"Please change the clothing, pose, hair style, and outfit to match this description: {base_outfit_desc}. "
-        "Keep the character's proportions, hair length, crop from the mid-thigh up, and image size exactly the same. "
-        "Do not change how long the character's hair is, but you can style the hair to fit the new outfit. "
-        f"Use a pure, single color, flat {background_color} background behind the character, and make sure the character, outfit, and hair have none of the background color on them. If the character has {bg} on them, slightly change those pixels to something farther away from the new background color, {bg}. "
-        "Maintain the same figure and silhouette as the original. "
-        "Do not crop off the head, and don't change the size of the character."
+        f"Edit the character's clothes to match this description: {base_outfit_desc}, but don't change the size, proportions, framing, or art style of the character. "
+        "Don't change the hair length, but edit the hair style to better fit the new outfit. "
+        f"Give the character a {bg} background behind them. "
+        "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
     )
-
 
 def build_standard_school_uniform_prompt(
     archetype_label: str,
@@ -135,8 +137,8 @@ def build_standard_school_uniform_prompt(
     """
     # Base description that applies to both variants
     base_intro = (
-        f"Edit the visual novel sprite, to give them the outfit we have also attached. "
-        "For redundancy, I am going to also describe the outfit below, but using the reference image is your first priority when it comes to what this outfit needs to look like. "
+        "Edit the visual novel character sprite, to have them wear the attached school uniform outfit, but don't change the size, proportions, framing, or art style of the character. "
+        "For redundancy, I am going to also describe the outfit below... "
     )
 
     if gender_style == "f":
@@ -153,10 +155,10 @@ def build_standard_school_uniform_prompt(
     bg = background_color.split("(")[0].strip()  # Extract color name (magenta or black)
     # Shared constraints and ST-format requirements
     tail = (
-        "Again, copy over the outfit from the image sent. The description above is just to help with consistency. "
-        f"Use a pure, single color, flat {background_color} background behind the character, and make sure the character, outfit, and hair have none of the background color on them. If the character has {bg} on them, slightly change those pixels to something farther away from the new background color, {bg}. "
-        "Do not change the art style, size, proportions, or hair length of the character, and keep their arms, hands, and hair all inside the image. "
-        "Thats all to say, the goal is to copy over the outfit from the reference, to the character we are editing, to replace their current outfit."
+        "Edit the proportions of the school uniform to better fit the character, to keep the character consistent. "
+        "Edit the hair style to better fit the new school uniform, but don't change the hair length. "
+        f"Give the character a {bg} background behind them. "
+        "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
     )
 
     return base_intro + uniform_desc + tail
@@ -177,18 +179,15 @@ def build_prompt_for_idea(concept: str, archetype_label: str, gender_style: str,
     Returns:
         Prompt string for new character generation from text.
     """
-    gender_word = "female character" if gender_style == "f" else "male character"
+    bg = background_color.split("(")[0].strip()  # Extract color name (magenta or black)
     return (
-        f"Create concept art for an original {archetype_label} {gender_word} "
-        f"for a Japanese-style visual novel. The character idea is:\n\n"
-        f"{concept}\n\n"
-        "Match the art style and rendering of the reference character images exactly so the new character looks "
-        "like they come from the same artist as the others. The character should be cropped from the "
-        "mid-thigh up, facing mostly toward the viewer in a friendly, neutral pose that "
-        "would work as a base sprite. They should not be holding anything in their hands. "
-        f"Use a pure, flat {background_color} behind the character, and make sure the character, outfit, and hair "
-        "have none of the background color on them. "
-        "Use clean line art and vibrant but not overly saturated colors that match the reference style."
+        f"Create concept art for an original {archetype_label}, for a Japanese-style visual novel. The character idea is: "
+        f"{concept} "
+        "Match the art style and rendering of the attached reference character images so the new character has clean line art and vibrant, but not overly saturated colors, that make it look like it came from the same artist. "
+        "Have them facing mostly toward the viewer in a friendly, neutral pose, that would work as a base sprite. "
+        "They should not be holding anything in their hands. "
+        f"Give the character a {bg} background behind them. "
+        "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
     )
 
 
@@ -196,37 +195,70 @@ def build_prompt_for_idea(concept: str, archetype_label: str, gender_style: str,
 # Outfit Prompt Loading and Configuration
 # =============================================================================
 
-def load_outfit_prompts(csv_path: Path) -> Dict[str, Dict[str, List[str]]]:
+def load_outfit_prompts(data_dir: Path) -> Dict[str, Dict[str, List[str]]]:
     """
-    Load outfit prompts from CSV: archetype, outfit_key, prompt.
+    Load outfit prompts from individual CSV files per archetype+outfit combination.
 
-    CSV format:
-        archetype,outfit_key,prompt
-        young woman,formal,"a dressy outfit..."
+    CSV files are named: {archetype}_{outfit_key}.csv
+    CSV format: Single 'prompt' column with one prompt per row.
+
+    Args:
+        data_dir: Directory containing the outfit CSV files (e.g., DATA_DIR).
 
     Returns:
         {archetype: {outfit_key: [prompt, ...]}, ...}
+
+    Example:
+        {
+            "young woman": {
+                "casual": ["prompt1", "prompt2", ...],
+                "formal": ["prompt1", "prompt2", ...],
+                ...
+            },
+            ...
+        }
     """
+    from ..constants import GENDER_ARCHETYPES, ALL_OUTFIT_KEYS
+
     database: Dict[str, Dict[str, List[str]]] = {}
 
-    if not csv_path.is_file():
-        print(f"[WARN] Outfit CSV not found at {csv_path}. Using generic prompts.")
-        return database
+    # Extract archetype names from GENDER_ARCHETYPES constant
+    archetypes = [archetype for archetype, _ in GENDER_ARCHETYPES]
 
-    try:
-        with csv_path.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                archetype = (row.get("archetype") or "").strip()
-                outfit_key = (row.get("outfit_key") or "").strip()
-                prompt = (row.get("prompt") or "").strip()
+    for archetype in archetypes:
+        for outfit_key in ALL_OUTFIT_KEYS:
+            # Generate filename: "young woman" -> "young_woman_casual.csv"
+            filename = f"{archetype.replace(' ', '_')}_{outfit_key}.csv"
+            csv_path = data_dir / filename
 
-                if not archetype or not outfit_key or not prompt:
-                    continue
+            if not csv_path.is_file():
+                print(f"[WARN] Outfit CSV not found: {filename}")
+                continue
 
-                database.setdefault(archetype, {}).setdefault(outfit_key, []).append(prompt)
-    except Exception as e:
-        print(f"[WARN] Failed to read outfit CSV {csv_path}: {e}")
+            try:
+                with csv_path.open("r", encoding="utf-8", newline="") as f:
+                    reader = csv.DictReader(f)
+                    prompts = []
+
+                    for row in reader:
+                        prompt = (row.get("prompt") or "").strip()
+                        if prompt:
+                            prompts.append(prompt)
+
+                    # Only add to database if we found prompts
+                    if prompts:
+                        database.setdefault(archetype, {})[outfit_key] = prompts
+
+            except Exception as e:
+                print(f"[WARN] Failed to read {filename}: {e}")
+
+    # Validation message
+    total_prompts = sum(
+        len(prompts)
+        for outfit_dict in database.values()
+        for prompts in outfit_dict.values()
+    )
+    print(f"[INFO] Loaded {total_prompts} outfit prompts from {len(database)} archetypes")
 
     return database
 

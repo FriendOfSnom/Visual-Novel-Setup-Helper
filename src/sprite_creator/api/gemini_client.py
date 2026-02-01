@@ -14,8 +14,47 @@ from typing import List, Optional
 
 import requests
 from PIL import Image
+from rembg import remove as rembg_remove, new_session as rembg_new_session
 
 from ..constants import CONFIG_PATH, GEMINI_API_URL
+from .exceptions import GeminiAPIError, GeminiSafetyError
+
+
+# =============================================================================
+# Background Removal Configuration
+# =============================================================================
+# Adjust these settings to test different configurations for halo removal.
+#
+# OPTION A (Current - No alpha matting): Best for clean anime art
+#   REMBG_MODEL = "isnet-anime"
+#   REMBG_ALPHA_MATTING = False
+#   REMBG_POST_PROCESS_MASK = True
+#
+# OPTION B (Alpha matting with higher erosion): For stubborn halos
+#   REMBG_MODEL = "isnet-anime"
+#   REMBG_ALPHA_MATTING = True
+#   REMBG_ALPHA_MATTING_ERODE_SIZE = 20
+#   REMBG_POST_PROCESS_MASK = True
+#
+# OPTION C (Different model): Try birefnet-general
+#   REMBG_MODEL = "birefnet-general"
+#   REMBG_ALPHA_MATTING = False
+#   REMBG_POST_PROCESS_MASK = True
+#
+# Available models: isnet-anime, birefnet-general, birefnet-general-lite,
+#                   bria-rmbg, u2net, silueta
+
+REMBG_MODEL = "isnet-anime"
+REMBG_ALPHA_MATTING = False  # Set to True to enable alpha matting
+REMBG_ALPHA_MATTING_FOREGROUND_THRESHOLD = 240
+REMBG_ALPHA_MATTING_BACKGROUND_THRESHOLD = 10
+REMBG_ALPHA_MATTING_ERODE_SIZE = 20
+REMBG_POST_PROCESS_MASK = True
+
+# Edge cleanup: Remove remaining halo pixels after rembg by color matching
+REMBG_EDGE_CLEANUP = True  # Enable edge halo cleanup after AI removal
+REMBG_EDGE_CLEANUP_TOLERANCE = 0  # Color distance threshold (0-255, higher=more aggressive)
+REMBG_EDGE_CLEANUP_PASSES = 0  # Number of edge cleanup iterations
 
 
 # =============================================================================
@@ -160,12 +199,221 @@ def _extract_inline_image_from_response(data: dict) -> Optional[bytes]:
 
 
 # =============================================================================
-# Background Removal (ML-Based)
+# Background Removal
 # =============================================================================
 
-def strip_background(image_bytes: bytes) -> bytes:
+# Global session for rembg (reused for performance)
+_rembg_session = None
+
+
+def get_rembg_session():
+    """Get or create the rembg session (lazy initialization)."""
+    global _rembg_session
+    if _rembg_session is None:
+        print(f"  [INFO] Initializing AI background removal model: {REMBG_MODEL}...")
+        _rembg_session = rembg_new_session(REMBG_MODEL)
+    return _rembg_session
+
+
+def cleanup_edge_halos(
+    original_bytes: bytes,
+    result_bytes: bytes,
+    tolerance: int = 40,
+    passes: int = 2
+) -> bytes:
     """
-    Strip a flat-ish magenta background.
+    Remove remaining halo pixels by detecting the actual background color.
+
+    Strategy:
+    1. DETECT background color by looking at original pixels where rembg made
+       them transparent - those pixels were definitely background
+    2. Find edge pixels in the rembg result (opaque pixels next to transparent)
+    3. Check if edge pixel's ORIGINAL color is close to detected background
+    4. If so, make it transparent and check neighbors on next pass
+
+    This approach works even if Gemini doesn't produce exactly #808080.
+
+    Args:
+        original_bytes: Original image BEFORE rembg (has solid background)
+        result_bytes: Image AFTER rembg (has transparent background)
+        tolerance: Color distance threshold (0-255). Higher = more aggressive
+        passes: Number of edge layers to process (each pass = 1 pixel deeper)
+
+    Returns:
+        PNG image bytes with cleaner edges
+    """
+    original = Image.open(BytesIO(original_bytes)).convert("RGBA")
+    result = Image.open(BytesIO(result_bytes)).convert("RGBA")
+    orig_pixels = original.load()
+    result_pixels = result.load()
+    w, h = result.size
+
+    # Step 1: DETECT background color from pixels rembg made transparent
+    # Sample original colors where result is now transparent
+    bg_samples_r = []
+    bg_samples_g = []
+    bg_samples_b = []
+
+    # Sample from corners and edges where background is most likely
+    sample_regions = [
+        (0, 0, w // 4, h // 4),  # top-left
+        (3 * w // 4, 0, w, h // 4),  # top-right
+        (0, 0, w, min(50, h // 10)),  # top strip
+    ]
+
+    for x1, y1, x2, y2 in sample_regions:
+        for y in range(y1, y2):
+            for x in range(x1, x2):
+                if result_pixels[x, y][3] == 0:  # Now transparent
+                    orig_r, orig_g, orig_b, _ = orig_pixels[x, y]
+                    bg_samples_r.append(orig_r)
+                    bg_samples_g.append(orig_g)
+                    bg_samples_b.append(orig_b)
+
+    if not bg_samples_r:
+        # Fallback: sample all transparent pixels
+        for y in range(h):
+            for x in range(w):
+                if result_pixels[x, y][3] == 0:
+                    orig_r, orig_g, orig_b, _ = orig_pixels[x, y]
+                    bg_samples_r.append(orig_r)
+                    bg_samples_g.append(orig_g)
+                    bg_samples_b.append(orig_b)
+
+    if not bg_samples_r:
+        # No transparent pixels - nothing to clean
+        return result_bytes
+
+    # Use median to avoid outliers from anti-aliased edges
+    bg_samples_r.sort()
+    bg_samples_g.sort()
+    bg_samples_b.sort()
+    mid = len(bg_samples_r) // 2
+    bg_r = bg_samples_r[mid]
+    bg_g = bg_samples_g[mid]
+    bg_b = bg_samples_b[mid]
+
+    print(f"  [INFO] Detected background color: RGB({bg_r}, {bg_g}, {bg_b})")
+
+    # Step 2: Identify edge pixels from rembg result
+    original_edges = set()
+    for y in range(h):
+        for x in range(w):
+            if result_pixels[x, y][3] == 0:
+                continue  # Skip transparent
+            # Check if adjacent to transparent
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    if result_pixels[nx, ny][3] == 0:
+                        original_edges.add((x, y))
+                        break
+
+    # Step 3: Process edge pixels in layers
+    tolerance_sq = tolerance * tolerance
+    total_cleaned = 0
+    current_edges = original_edges.copy()
+
+    for pass_num in range(passes):
+        if not current_edges:
+            break
+
+        edges_to_clear = []
+        for x, y in current_edges:
+            if result_pixels[x, y][3] == 0:
+                continue  # Already removed
+
+            # Check ORIGINAL pixel color against detected background
+            orig_r, orig_g, orig_b, _ = orig_pixels[x, y]
+            dr = orig_r - bg_r
+            dg = orig_g - bg_g
+            db = orig_b - bg_b
+            dist_sq = dr * dr + dg * dg + db * db
+
+            if dist_sq <= tolerance_sq:
+                edges_to_clear.append((x, y))
+
+        # Apply changes and find new edges for next pass
+        next_edges = set()
+        for x, y in edges_to_clear:
+            result_pixels[x, y] = (0, 0, 0, 0)
+            # Find neighbors that become new edges
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    if result_pixels[nx, ny][3] != 0:  # Opaque neighbor
+                        next_edges.add((nx, ny))
+
+        total_cleaned += len(edges_to_clear)
+        current_edges = next_edges
+
+    if total_cleaned > 0:
+        print(f"  [INFO] Edge cleanup removed {total_cleaned} halo pixels")
+
+    buf = BytesIO()
+    result.save(buf, format="PNG", compress_level=0, optimize=False)
+    return buf.getvalue()
+
+
+def strip_background_ai(
+    image_bytes: bytes,
+    skip_edge_cleanup: bool = False,
+    edge_cleanup_tolerance: Optional[int] = None,
+    edge_cleanup_passes: Optional[int] = None,
+) -> bytes:
+    """
+    Remove background using AI (rembg) with optional edge cleanup.
+
+    Uses configurable model and settings from REMBG_* constants.
+    Works with any character colors - no magenta conflicts.
+    Uses GPU acceleration if available.
+
+    Args:
+        image_bytes: Raw PNG image bytes.
+        skip_edge_cleanup: If True, skip the edge cleanup step (useful when
+            edge cleanup will be done interactively in the review UI).
+        edge_cleanup_tolerance: Custom tolerance for edge cleanup (uses default if None).
+        edge_cleanup_passes: Custom passes for edge cleanup (uses default if None).
+
+    Returns:
+        PNG image bytes with transparent background.
+    """
+    try:
+        session = get_rembg_session()
+        result = rembg_remove(
+            image_bytes,
+            session=session,
+            alpha_matting=REMBG_ALPHA_MATTING,
+            alpha_matting_foreground_threshold=REMBG_ALPHA_MATTING_FOREGROUND_THRESHOLD,
+            alpha_matting_background_threshold=REMBG_ALPHA_MATTING_BACKGROUND_THRESHOLD,
+            alpha_matting_erode_size=REMBG_ALPHA_MATTING_ERODE_SIZE,
+            post_process_mask=REMBG_POST_PROCESS_MASK,
+        )
+
+        # Apply edge cleanup to remove remaining halo pixels
+        if REMBG_EDGE_CLEANUP and not skip_edge_cleanup:
+            tolerance = edge_cleanup_tolerance if edge_cleanup_tolerance is not None else REMBG_EDGE_CLEANUP_TOLERANCE
+            passes = edge_cleanup_passes if edge_cleanup_passes is not None else REMBG_EDGE_CLEANUP_PASSES
+            result = cleanup_edge_halos(
+                original_bytes=image_bytes,
+                result_bytes=result,
+                tolerance=tolerance,
+                passes=passes,
+            )
+
+        return result
+    except Exception as e:
+        print(f"  [WARN] AI background removal failed, returning original: {e}")
+        return image_bytes
+
+
+def strip_background_threshold(image_bytes: bytes) -> bytes:
+    """
+    Strip background using color threshold (legacy method).
+
+    Only works reliably with magenta backgrounds and characters without pink colors.
+    Kept as fallback option.
+
     Strategy:
       1) Load RGBA.
       2) Collect all opaque border pixels.
@@ -244,22 +492,26 @@ def _call_gemini_with_parts(
     api_key: str,
     parts: List[dict],
     context: str,
-    strip_bg: bool = True,
+    skip_background_removal: bool = False,
+    edge_cleanup_tolerance: Optional[int] = None,
+    edge_cleanup_passes: Optional[int] = None,
 ) -> bytes:
     """
     Call Gemini API with custom parts array and retry logic.
 
     Handles retries for transient errors (429, 500, 502, 503, 504).
-    Optionally strips background from returned image.
+    Applies AI background removal to returned images unless skipped.
 
     Args:
         api_key: Google Gemini API key.
         parts: List of content parts (text, images, etc.).
         context: Description of the operation for error messages.
-        strip_bg: Whether to strip background (True for automatic mode, False for manual mode).
+        skip_background_removal: If True, return raw image without background removal.
+        edge_cleanup_tolerance: Custom tolerance for edge cleanup (uses default if None).
+        edge_cleanup_passes: Custom passes for edge cleanup (uses default if None).
 
     Returns:
-        Image bytes, optionally with background stripped.
+        Image bytes (with transparent background unless skip_background_removal=True).
 
     Raises:
         RuntimeError: If API call fails after all retries.
@@ -286,17 +538,32 @@ def _call_gemini_with_parts(
                     )
                     last_error = f"Gemini API error {response.status_code}: {response.text}"
                     continue
-                raise RuntimeError(f"Gemini API error {response.status_code}: {response.text}")
+                raise GeminiAPIError(f"Gemini API error {response.status_code}: {response.text}")
 
             data = response.json()
+
+            # Check for safety blocking before extracting image
+            candidates = data.get("candidates", [])
+            for candidate in candidates:
+                finish_reason = candidate.get("finishReason")
+                if finish_reason in ("SAFETY", "IMAGE_SAFETY", "IMAGE_OTHER"):
+                    safety_ratings = candidate.get("safetyRatings", [])
+                    raise GeminiSafetyError(
+                        f"Content blocked by safety filters ({context}): {finish_reason}",
+                        safety_ratings
+                    )
+
             raw_bytes = _extract_inline_image_from_response(data)
 
             if raw_bytes is not None:
-                # Only strip background if in automatic mode
-                if strip_bg:
-                    return strip_background(raw_bytes)
-                else:
+                if skip_background_removal:
                     return raw_bytes
+                # Apply AI background removal with optional custom settings
+                return strip_background_ai(
+                    raw_bytes,
+                    edge_cleanup_tolerance=edge_cleanup_tolerance,
+                    edge_cleanup_passes=edge_cleanup_passes,
+                )
 
             # Log the full response to diagnose why there's no image
             print(f"[DEBUG] Gemini response without image data:")
@@ -309,8 +576,11 @@ def _call_gemini_with_parts(
                     f"attempt {attempt}; retrying..."
                 )
                 continue
-            raise RuntimeError(last_error)
+            raise GeminiAPIError(last_error)
 
+        except GeminiSafetyError:
+            # Safety errors are not transient - don't retry, let caller handle with different prompt
+            raise
         except Exception as e:
             last_error = str(e)
             if attempt < max_retries:
@@ -319,51 +589,69 @@ def _call_gemini_with_parts(
                     f"attempt {attempt}; retrying: {e}"
                 )
                 continue
-            raise RuntimeError(
+            raise GeminiAPIError(
                 f"Gemini call failed after {max_retries} attempts ({context}): {last_error}"
             )
 
 
-def call_gemini_image_edit(api_key: str, prompt: str, image_b64: str, strip_bg: bool = True) -> bytes:
+def call_gemini_image_edit(
+    api_key: str,
+    prompt: str,
+    image_b64: str,
+    skip_background_removal: bool = False,
+    edge_cleanup_tolerance: Optional[int] = None,
+    edge_cleanup_passes: Optional[int] = None,
+) -> bytes:
     """
     Call Gemini image model with an input image and text prompt for editing.
+
+    AI background removal is automatically applied to the result unless skipped.
 
     Args:
         api_key: Google Gemini API key.
         prompt: Text prompt describing the desired edit.
         image_b64: Base64-encoded input image.
-        strip_bg: Whether to strip background (True for automatic mode, False for manual mode).
+        skip_background_removal: If True, return raw image without background removal.
+        edge_cleanup_tolerance: Custom tolerance for edge cleanup (uses default if None).
+        edge_cleanup_passes: Custom passes for edge cleanup (uses default if None).
 
     Returns:
-        Generated/edited image bytes.
+        Generated/edited image bytes (with transparent background unless skipped).
     """
     parts: List[dict] = [
         {"text": prompt},
         {"inline_data": {"mime_type": "image/png", "data": image_b64}},
     ]
-    return _call_gemini_with_parts(api_key, parts, "image_edit", strip_bg)
+    return _call_gemini_with_parts(
+        api_key, parts, "image_edit", skip_background_removal,
+        edge_cleanup_tolerance, edge_cleanup_passes
+    )
 
 
 def call_gemini_text_or_refs(
     api_key: str,
     prompt: str,
     ref_images: Optional[List[Path]] = None,
-    strip_bg: bool = True,
+    skip_background_removal: bool = False,
+    edge_cleanup_tolerance: Optional[int] = None,
+    edge_cleanup_passes: Optional[int] = None,
 ) -> bytes:
     """
     Call Gemini with a text prompt and optional reference images.
 
     Used for generating new characters from text descriptions with
-    style references.
+    style references. AI background removal is automatically applied unless skipped.
 
     Args:
         api_key: Google Gemini API key.
         prompt: Text prompt describing what to generate.
         ref_images: Optional list of reference image paths for style guidance.
-        strip_bg: Whether to strip background (True for automatic mode, False for manual mode).
+        skip_background_removal: If True, return raw image without background removal.
+        edge_cleanup_tolerance: Custom tolerance for edge cleanup (uses default if None).
+        edge_cleanup_passes: Custom passes for edge cleanup (uses default if None).
 
     Returns:
-        Generated image bytes.
+        Generated image bytes (with transparent background unless skipped).
     """
     parts: List[dict] = [{"text": prompt}]
 
@@ -378,4 +666,7 @@ def call_gemini_text_or_refs(
             except Exception as e:
                 print(f"[WARN] Could not load reference image {ref_path}: {e}")
 
-    return _call_gemini_with_parts(api_key, parts, "text_or_refs", strip_bg)
+    return _call_gemini_with_parts(
+        api_key, parts, "text_or_refs", skip_background_removal,
+        edge_cleanup_tolerance, edge_cleanup_passes
+    )
