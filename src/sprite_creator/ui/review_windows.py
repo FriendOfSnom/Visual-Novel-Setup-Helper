@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple
 
 from PIL import Image, ImageTk, ImageDraw
 
-from ..constants import DATA_DIR
+from ..config import DATA_DIR
 from ..api.gemini_client import cleanup_edge_halos, REMBG_EDGE_CLEANUP_TOLERANCE, REMBG_EDGE_CLEANUP_PASSES
 from .tk_common import (
     BG_COLOR,

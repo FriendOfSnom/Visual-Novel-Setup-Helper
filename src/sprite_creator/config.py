@@ -8,6 +8,12 @@ All global paths, constants, and static tables for the Gemini sprite pipeline.
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# APPLICATION INFO
+# ═══════════════════════════════════════════════════════════════════════════════
+APP_NAME = "AI Sprite Creator"
+APP_VERSION = "2.1.0"
+
 # Base directory for this package
 SPRITE_CREATOR_DIR = Path(__file__).resolve().parent
 
@@ -27,26 +33,62 @@ GEMINI_API_URL = (
     f"{GEMINI_IMAGE_MODEL}:generateContent"
 )
 
-# Tk UI style constants
-BG_COLOR = "lightgray"
-TITLE_FONT = ("Arial", 16, "bold")
-INSTRUCTION_FONT = ("Arial", 12)
-LINE_COLOR = "#00E5FF"
+# ═══════════════════════════════════════════════════════════════════════════════
+# DARK THEME COLOR SCHEME
+# ═══════════════════════════════════════════════════════════════════════════════
+BG_COLOR = "#2B2B2B"              # Main window background
+BG_SECONDARY = "#1E1E1E"          # Darker areas (header, footer)
+CARD_BG = "#3C3C3C"               # Card/panel backgrounds
+CARD_BG_HOVER = "#4A4A4A"         # Card hover state
+CARD_BG_SELECTED = "#4A90D9"      # Selected card background
+
+TEXT_COLOR = "#FFFFFF"            # Primary text
+TEXT_SECONDARY = "#A0A0A0"        # Secondary/muted text
+TEXT_DISABLED = "#666666"         # Disabled text
+
+ACCENT_COLOR = "#4A90D9"          # Blue accent for primary buttons
+ACCENT_HOVER = "#5BA0E9"          # Primary button hover
+PRIMARY_COLOR = "#4A90D9"         # Alias for accent (backwards compatibility)
+SECONDARY_COLOR = "#666666"       # Secondary button background
+SECONDARY_HOVER = "#777777"       # Secondary button hover
+DANGER_COLOR = "#D94A4A"          # Red for destructive actions
+DANGER_HOVER = "#E95A5A"          # Danger button hover
+SUCCESS_COLOR = "#4AD94A"         # Green for success states
+
+LINE_COLOR = "#00E5FF"            # Cyan accent for highlights
+HIGHLIGHT_COLOR = "#00E5FF"       # Interactive element highlights
+BORDER_COLOR = "#555555"          # Subtle borders
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FONT DEFINITIONS (Segoe UI for modern Windows look)
+# ═══════════════════════════════════════════════════════════════════════════════
+FONT_FAMILY = "Segoe UI"
+
+# Title fonts (large, prominent)
+TITLE_FONT = (FONT_FAMILY, 24, "bold")       # Main screen titles
+PAGE_TITLE_FONT = (FONT_FAMILY, 20, "bold")  # Page/wizard step titles
+SECTION_FONT = (FONT_FAMILY, 16, "bold")     # Section headers
+
+# Body fonts (medium, readable)
+BODY_FONT = (FONT_FAMILY, 12)                # Regular body text
+BODY_FONT_BOLD = (FONT_FAMILY, 12, "bold")   # Emphasized body text
+
+# Small fonts (compact, secondary)
+SMALL_FONT = (FONT_FAMILY, 10)               # Labels, hints, secondary text
+SMALL_FONT_BOLD = (FONT_FAMILY, 10, "bold")  # Small emphasized text
+
+# Button fonts
+BUTTON_FONT = (FONT_FAMILY, 11)              # Standard buttons
+BUTTON_FONT_LARGE = (FONT_FAMILY, 13, "bold") # Large action buttons
+
+# Legacy aliases (backwards compatibility)
+INSTRUCTION_FONT = BODY_FONT
+
+# Layout constants
 WINDOW_MARGIN = 10
 WRAP_PADDING = 40
-
-# New wizard UI constants
-PAGE_TITLE_FONT = ("Arial", 18, "bold")
-SECTION_FONT = ("Arial", 14, "bold")
-BODY_FONT = ("Arial", 11)
-BUTTON_FONT = ("Arial", 10)
-
-# Color scheme
-PRIMARY_COLOR = "#0066CC"      # Blue for primary actions
-SECONDARY_COLOR = "#666666"    # Gray for secondary text
-DANGER_COLOR = "#CC0000"       # Red for destructive actions
-SUCCESS_COLOR = "#00AA00"      # Green for completion
-HIGHLIGHT_COLOR = "#00E5FF"    # Cyan for interactive elements (same as LINE_COLOR)
+CARD_PADDING = 16
+CARD_RADIUS = 8  # For styling reference (tkinter doesn't support border-radius natively)
 
 # Outfit keys:
 # Base is always included by the pipeline, but you can choose which additional

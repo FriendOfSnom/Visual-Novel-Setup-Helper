@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from PIL import Image
 
-from ..constants import (
+from ..config import (
     EXPRESSIONS_SEQUENCE,
     REF_SPRITES_DIR,
     SAFETY_FALLBACK_EXPRESSION_PROMPTS,
@@ -574,27 +574,34 @@ def generate_initial_character_from_prompt(
     api_key: str,
     concept: str,
     archetype_label: str,
-    output_root: Path,
+    output_root: Optional[Path] = None,
+    out_stem: Optional[Path] = None,
+    gender_style: Optional[str] = None,
 ) -> Path:
     """
     Use Gemini + reference sprites to generate a base character image
     from a text concept.
 
-    Output path:
+    Output path (if out_stem not provided):
         <output_root>/_prompt_sources/<slug>.png
 
     Args:
         api_key: Gemini API key.
         concept: User's character concept description.
         archetype_label: Character archetype.
-        output_root: Root output directory.
+        output_root: Root output directory (used if out_stem not provided).
+        out_stem: Direct output path stem (without extension).
+        gender_style: Optional gender style override ("f" or "m").
 
     Returns:
         Path to generated character image.
     """
     from ..api.prompt_builders import archetype_to_gender_style
 
-    gender_style = archetype_to_gender_style(archetype_label)
+    # Use provided gender_style or derive from archetype
+    if not gender_style:
+        gender_style = archetype_to_gender_style(archetype_label)
+
     refs = get_reference_images_for_archetype(archetype_label)
     if refs:
         print(f"[INFO] Using {len(refs)} reference sprite(s) for archetype '{archetype_label}'.")
@@ -609,11 +616,18 @@ def generate_initial_character_from_prompt(
     print("[Gemini] Generating new character from text prompt...")
     img_bytes = call_gemini_text_or_refs(api_key, full_prompt, refs)
 
-    rand_token = hex(random.getrandbits(32))[2:]
-    slug = f"{archetype_label.replace(' ', '_')}_{rand_token}"
-    prompt_src_dir = output_root / "_prompt_sources"
-    prompt_src_dir.mkdir(parents=True, exist_ok=True)
-    out_stem = prompt_src_dir / slug
+    # Determine output path
+    if out_stem is None:
+        if output_root is None:
+            raise ValueError("Either out_stem or output_root must be provided")
+        rand_token = hex(random.getrandbits(32))[2:]
+        slug = f"{archetype_label.replace(' ', '_')}_{rand_token}"
+        prompt_src_dir = output_root / "_prompt_sources"
+        prompt_src_dir.mkdir(parents=True, exist_ok=True)
+        out_stem = prompt_src_dir / slug
+    else:
+        # Ensure parent directory exists
+        out_stem.parent.mkdir(parents=True, exist_ok=True)
 
     final_path = save_image_bytes_as_png(img_bytes, out_stem)
 

@@ -29,7 +29,7 @@ from ..api.prompt_builders import (
     build_outfit_prompt,
     build_standard_school_uniform_prompt,
 )
-from ..constants import (
+from ..config import (
     SAFETY_FALLBACK_UNDERWEAR_PROMPTS,
     SAFETY_FALLBACK_UNDERWEAR_TIER4,
     SAFETY_FALLBACK_ATHLETIC_UNDERWEAR,

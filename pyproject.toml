@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sprite-creator"
+version = "2.1.0"
+description = "AI-powered sprite generation for visual novels using Google Gemini"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Tommy"}
+]
+keywords = ["sprite", "visual-novel", "ai", "gemini", "character-generator"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: MacOS X",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Games/Entertainment",
+    "Topic :: Multimedia :: Graphics",
+]
+dependencies = [
+    "requests",
+    "beautifulsoup4",
+    "pillow>=10.3",
+    "pyyaml",
+    "pandas",
+    "rembg>=2.0.57",
+]
+
+[project.urls]
+Homepage = "https://github.com/tommy/sprite-creator"
+
+[project.gui-scripts]
+sprite-creator = "sprite_creator.__main__:main"
+
+[project.scripts]
+sprite-creator-cli = "sprite_creator.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"sprite_creator" = [
+    "data/*.csv",
+    "data/reference_sprites/**/*",
+    "tester/templates/*",
+]

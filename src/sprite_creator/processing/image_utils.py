@@ -8,7 +8,7 @@ from typing import List
 
 from PIL import Image
 
-from ..constants import REF_SPRITES_DIR
+from ..config import REF_SPRITES_DIR
 
 
 def save_img_webp_or_png(img: Image.Image, dest_stem: Path) -> Path:

@@ -27,6 +27,7 @@ __pycache__/
 
 # Sprite tester generated files
 src/sprite_creator/tester/_test_project/
+src/sprite_creator/tools/tester/_test_project/
 
 # OS files
 .DS_Store

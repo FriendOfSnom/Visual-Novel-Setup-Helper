@@ -10,7 +10,7 @@ import random
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..constants import GENDER_ARCHETYPES
+from ..config import GENDER_ARCHETYPES
 
 
 # =============================================================================
@@ -40,7 +40,7 @@ def archetype_to_gender_style(archetype_label: str) -> str:
 def build_initial_pose_prompt(
     gender_style: str,
     archetype_label: str = "",
-    background_color: str = "magenta (#FF00FF)",
+    background_color: str = "black (#000000)",
     additional_instructions: str = "",
 ) -> str:
     """
@@ -70,7 +70,7 @@ def build_initial_pose_prompt(
     return prompt
 
 
-def build_expression_prompt(expression_desc: str, background_color: str = "magenta (#FF00FF)") -> str:
+def build_expression_prompt(expression_desc: str, background_color: str = "black (#000000)") -> str:
     """
     Prompt to change facial expression, keeping style and framing.
 
@@ -91,7 +91,7 @@ def build_expression_prompt(expression_desc: str, background_color: str = "magen
         "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
     )
 
-def build_outfit_prompt(base_outfit_desc: str, gender_style: str, background_color: str = "magenta (#FF00FF)") -> str:
+def build_outfit_prompt(base_outfit_desc: str, gender_style: str, background_color: str = "black (#000000)") -> str:
     """
     Prompt to change clothing to base_outfit_desc on the given pose.
 
@@ -116,7 +116,7 @@ def build_outfit_prompt(base_outfit_desc: str, gender_style: str, background_col
 def build_standard_school_uniform_prompt(
     archetype_label: str,
     gender_style: str,
-    background_color: str = "magenta (#FF00FF)",
+    background_color: str = "black (#000000)",
 ) -> str:
     """
     Build a standardized school-uniform prompt matching the rest of the outfit prompts.
@@ -164,7 +164,7 @@ def build_standard_school_uniform_prompt(
     return base_intro + uniform_desc + tail
 
 
-def build_prompt_for_idea(concept: str, archetype_label: str, gender_style: str, background_color: str = "magenta (#FF00FF)") -> str:
+def build_prompt_for_idea(concept: str, archetype_label: str, gender_style: str, background_color: str = "black (#000000)") -> str:
     """
     Build text prompt used when generating a new character from a concept.
 
@@ -218,7 +218,7 @@ def load_outfit_prompts(data_dir: Path) -> Dict[str, Dict[str, List[str]]]:
             ...
         }
     """
-    from ..constants import GENDER_ARCHETYPES, ALL_OUTFIT_KEYS
+    from ..config import GENDER_ARCHETYPES, ALL_OUTFIT_KEYS
 
     database: Dict[str, Dict[str, List[str]]] = {}
 

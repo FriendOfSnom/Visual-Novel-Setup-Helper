@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 
 echo =================================
-echo  Visual Novel Development Toolkit
+echo  AI Sprite Creator
 echo  Windows Startup Script
 echo =================================
 
@@ -37,11 +37,13 @@ if errorlevel 1 goto err_pip_install
 
 echo Dependencies are up to date.
 
-rem --- run the main menu
-echo Launching the toolkit...
-python -X dev -u "src\main.py"
+rem --- run the application
+echo Launching AI Sprite Creator...
+cd src
+python -m sprite_creator
 set "RC=%ERRORLEVEL%"
-echo main.py exited with code %RC%
+cd ..
+echo Application exited with code %RC%
 
 rem --- deactivate venv (best effort)
 call venv\Scripts\deactivate >nul 2>&1

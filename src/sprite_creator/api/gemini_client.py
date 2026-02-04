@@ -16,7 +16,7 @@ import requests
 from PIL import Image
 from rembg import remove as rembg_remove, new_session as rembg_new_session
 
-from ..constants import CONFIG_PATH, GEMINI_API_URL
+from ..config import CONFIG_PATH, GEMINI_API_URL
 from .exceptions import GeminiAPIError, GeminiSafetyError
 
 
@@ -128,15 +128,21 @@ def interactive_api_key_setup() -> str:
     return api_key
 
 
-def get_api_key() -> str:
+def get_api_key(use_gui: bool = True) -> str:
     """
     Return Gemini API key from environment variable or config file.
 
     Checks GEMINI_API_KEY environment variable first, then config file.
-    If neither exists, prompts user interactively.
+    If neither exists, prompts user interactively (GUI or CLI).
+
+    Args:
+        use_gui: If True, use GUI dialog for setup. If False, use CLI.
 
     Returns:
         Valid Gemini API key.
+
+    Raises:
+        SystemExit: If no API key is available and user cancels setup.
     """
     # Check environment variable first
     env_key = os.environ.get("GEMINI_API_KEY")
@@ -149,7 +155,18 @@ def get_api_key() -> str:
         return config["api_key"]
 
     # Interactive setup if neither exists
-    return interactive_api_key_setup()
+    if use_gui:
+        try:
+            from ..ui.api_setup import show_api_setup
+            api_key = show_api_setup()
+            if not api_key:
+                raise SystemExit("API key setup cancelled. Exiting.")
+            return api_key
+        except ImportError:
+            # Fall back to CLI if GUI module not available
+            return interactive_api_key_setup()
+    else:
+        return interactive_api_key_setup()
 
 
 # =============================================================================
