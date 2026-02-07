@@ -32,8 +32,10 @@ from .tk_common import (
     apply_dark_theme,
     apply_window_size,
     create_primary_button,
+    create_secondary_button,
     create_help_button,
 )
+from .api_setup import show_api_setup, get_existing_api_key
 
 
 # Help text for the launcher
@@ -308,6 +310,15 @@ class LauncherWindow:
         )
         footer_text.pack()
 
+        # API Settings button
+        settings_btn = create_secondary_button(
+            footer_frame,
+            "⚙ Gemini API Settings",
+            self._open_api_settings,
+            width=20,
+        )
+        settings_btn.pack(pady=(10, 0))
+
     def _select_sprite_creator(self):
         """Handle Character Sprite Creator selection."""
         self._result = "sprite_creator"
@@ -322,6 +333,12 @@ class LauncherWindow:
         """Handle Sprite Tester selection."""
         self._result = "sprite_tester"
         self.root.quit()
+
+    def _open_api_settings(self):
+        """Open the API settings dialog to view/change the Gemini API key."""
+        existing_key = get_existing_api_key() or ""
+        # Show the API setup dialog (doesn't close the launcher)
+        show_api_setup(existing_key)
 
     def _on_close(self):
         """Handle window close."""
