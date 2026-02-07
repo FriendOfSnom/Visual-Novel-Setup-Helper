@@ -15,7 +15,6 @@ from .image_utils import (
 )
 
 from .pose_processor import (
-    generate_initial_pose_once,
     generate_single_outfit,
     generate_outfits_once,
     generate_standard_uniform_outfit,
@@ -43,7 +42,6 @@ __all__ = [
     "get_reference_images_for_archetype",
     "get_standard_uniform_reference_images",
     # Pose processing
-    "generate_initial_pose_once",
     "generate_single_outfit",
     "generate_outfits_once",
     "generate_standard_uniform_outfit",

@@ -25,15 +25,14 @@ from .gemini_client import (
 from .background_removal_legacy import strip_background_legacy
 
 from .prompt_builders import (
-    build_initial_pose_prompt,
     build_expression_prompt,
     build_outfit_prompt,
     build_standard_school_uniform_prompt,
     build_prompt_for_idea,
     archetype_to_gender_style,
-    load_outfit_prompts,
     build_outfit_prompts_with_config,
     build_simple_outfit_description,
+    generate_outfit_description,
 )
 
 __all__ = [
@@ -52,13 +51,12 @@ __all__ = [
     "REMBG_EDGE_CLEANUP_TOLERANCE",
     "REMBG_EDGE_CLEANUP_PASSES",
     # Prompt builders
-    "build_initial_pose_prompt",
     "build_expression_prompt",
     "build_outfit_prompt",
     "build_standard_school_uniform_prompt",
     "build_prompt_for_idea",
     "archetype_to_gender_style",
-    "load_outfit_prompts",
     "build_outfit_prompts_with_config",
     "build_simple_outfit_description",
+    "generate_outfit_description",
 ]

@@ -51,17 +51,40 @@ class SourceStep(WizardStep):
 
     STEP_ID = "source"
     STEP_TITLE = "Source"
-    STEP_HELP = """Choose How to Create Your Character
+    STEP_HELP = """How to Create Your Character
 
-From an Image:
-Upload an existing character image (PNG, JPG, WEBP). The AI will use this as a reference to generate outfit variations and expressions while maintaining the character's appearance.
+This step determines how your character will be created.
 
-From a Text Prompt:
-Describe the character you want and the AI will design them from scratch. You'll enter a description of their appearance, personality traits, or style.
+FROM AN IMAGE
+Click the "From an Image" card, then click "Browse for Image..." to select your source file.
 
-Which should I choose?
-- Use "From Image" if you have reference art or want to match an existing character
-- Use "Text Prompt" if you want the AI to create something new based on your description"""
+Supported formats: PNG, JPG, JPEG, WEBP
+
+For best results, your image should have:
+- A standing pose (full body or waist-up)
+- A simple or solid background (the AI will normalize it)
+- Anime/illustration style artwork
+- Clear, unobstructed view of the character
+- Resolution of at least 512x512 pixels
+
+The AI will normalize your image (sharpen, add black background) and then generate outfit variations and expressions while preserving the character's appearance.
+
+FROM A TEXT PROMPT
+Click the "From a Text Prompt" card to describe a character from scratch.
+
+You'll enter details in the next step, including:
+- Physical appearance (hair color, eye color, body type)
+- Clothing style and colors
+- Personality traits that affect expression
+- Any distinctive features
+
+The AI will design the character based on your description.
+
+WHICH SHOULD I CHOOSE?
+- Use "From Image" if you have existing artwork or want to match a specific look
+- Use "Text Prompt" to create something entirely new
+
+After selecting, click Next to continue."""
 
     def __init__(self, wizard, state: WizardState):
         super().__init__(wizard, state)
@@ -211,25 +234,50 @@ class CharacterStep(WizardStep):
 
     STEP_ID = "character"
     STEP_TITLE = "Character"
-    STEP_HELP = """Character Information
+    STEP_HELP = """Character Setup
 
-Voice:
-Determines the gender presentation and affects which archetypes are available.
+This step configures your character's identity and prepares the base image.
 
-Name:
-The display name for this character. A random name is suggested based on voice, but you can change it.
+LEFT SIDE: CHARACTER INFO
 
-Archetype:
-Affects outfit generation. Different archetypes get different clothing styles:
-- Young Woman/Man: School-age characters, can use standard uniforms
-- Adult Woman/Man: Professional/mature characters
-- Motherly/Fatherly: Older characters with mature styling
+Voice (Required)
+Click "Girl" or "Boy" to set the character's voice. This determines:
+- Which name pool is used for random names
+- Which archetypes are available
+- Pronoun references in some prompts
 
-Concept (Text Prompt mode only):
-Describe the character's appearance, clothing style, hair, eyes, personality traits, etc. Be specific about visual details you want.
+Name
+A random name is suggested when you pick a voice. You can type any name you want. This appears in the final character.yml file.
 
-Crop:
-Click on the image to set a horizontal crop line. Use Accept to apply the crop, or Restore to undo."""
+Archetype (Required)
+Affects the style of generated outfits:
+- Young Woman/Man: School-age styling, unlocks "Standard Uniform" option
+- Adult Woman/Man: Professional, mature clothing styles
+- Motherly/Fatherly: Older character styling
+
+RIGHT SIDE: IMAGE HANDLING
+
+For Image Mode:
+Your image is automatically "normalized" when you enter this step:
+- Resolution is sharpened if needed
+- A black background is added
+- The character is kept intact
+
+After normalization, you can optionally modify the character by typing instructions (e.g., "change hair to blue", "add glasses") and clicking "Modify Character".
+
+Use "Reset to Normalized" to undo modifications.
+
+CROP TOOL
+Click anywhere on the image to set a horizontal crop line (shown in red). This crops the image at that point - useful for removing feet or adjusting the frame.
+
+- Click "Accept Crop" to apply the crop
+- Click "Restore Original" to undo and start over
+- The Next button is disabled until you accept
+
+For Text Prompt Mode:
+Fill in the "Character Description" box with details about appearance, then click "Generate Character". Once generated, use the crop tool as described above.
+
+Click Next when your character looks right."""
 
     def __init__(self, wizard, state: WizardState):
         super().__init__(wizard, state)
@@ -268,6 +316,16 @@ Click on the image to set a horizontal crop line. Use Accept to apply the crop, 
         self._generate_btn: Optional[tk.Button] = None
         self._generation_status: Optional[tk.Label] = None
         self._generated_image: Optional[Image.Image] = None
+
+        # For image mode: normalization and modification
+        self._image_modify_frame: Optional[tk.Frame] = None
+        self._modify_text: Optional[tk.Text] = None
+        self._modify_btn: Optional[tk.Button] = None
+        self._reset_to_normalized_btn: Optional[tk.Button] = None
+        self._image_status: Optional[tk.Label] = None
+        self._is_normalizing: bool = False
+        self._normalized_image: Optional[Image.Image] = None
+        self._content_visible: bool = False  # Track if step content is visible
 
         # Load name pools
         self._girl_names, self._boy_names = load_name_pool(NAMES_CSV_PATH)
@@ -391,6 +449,18 @@ Click on the image to set a horizontal crop line. Use Accept to apply the crop, 
             font=SMALL_FONT,
         ).pack(anchor="w", pady=(0, 6))
 
+        # Gemini safety warning
+        tk.Label(
+            self._concept_frame,
+            text="Note: Gemini may refuse to generate characters with certain descriptions. "
+                 "If generation fails, try adjusting your description.",
+            bg=BG_COLOR,
+            fg="#FFB347",  # Warning orange
+            font=SMALL_FONT,
+            wraplength=350,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+
         self._concept_text = tk.Text(
             self._concept_frame,
             height=5,
@@ -488,6 +558,69 @@ Click on the image to set a horizontal crop line. Use Accept to apply the crop, 
         )
         # Restore button starts hidden
         self._restore_btn.pack_forget()
+
+        # === Image Mode: Modify Character Section (shown in image mode only) ===
+        self._image_modify_frame = tk.Frame(self._left_col, bg=BG_COLOR)
+        # Will be packed in on_enter for image mode
+
+        tk.Label(
+            self._image_modify_frame,
+            text="Modify Character (Optional)",
+            bg=BG_COLOR,
+            fg=TEXT_COLOR,
+            font=SECTION_FONT,
+        ).pack(anchor="w", pady=(0, 6))
+
+        tk.Label(
+            self._image_modify_frame,
+            text="Describe changes to make (hair, clothes, features, etc.)",
+            bg=BG_COLOR,
+            fg=TEXT_SECONDARY,
+            font=SMALL_FONT,
+        ).pack(anchor="w", pady=(0, 6))
+
+        self._modify_text = tk.Text(
+            self._image_modify_frame,
+            height=3,
+            width=40,
+            wrap="word",
+            bg="#1E1E1E",
+            fg=TEXT_COLOR,
+            insertbackground=TEXT_COLOR,
+            font=BODY_FONT,
+        )
+        self._modify_text.pack(fill="x")
+
+        # Buttons row for modify and reset
+        modify_btns_frame = tk.Frame(self._image_modify_frame, bg=BG_COLOR)
+        modify_btns_frame.pack(pady=(8, 0))
+
+        self._modify_btn = create_secondary_button(
+            modify_btns_frame,
+            "Modify Character",
+            self._on_modify_click,
+            width=16,
+        )
+        self._modify_btn.pack(side="left", padx=(0, 8))
+
+        self._reset_to_normalized_btn = create_secondary_button(
+            modify_btns_frame,
+            "Reset to Normalized",
+            self._on_reset_to_normalized,
+            width=16,
+        )
+        self._reset_to_normalized_btn.pack(side="left")
+        # Hidden initially until a modification is made
+        self._reset_to_normalized_btn.pack_forget()
+
+        self._image_status = tk.Label(
+            self._image_modify_frame,
+            text="",
+            bg=BG_COLOR,
+            fg=TEXT_SECONDARY,
+            font=SMALL_FONT,
+        )
+        self._image_status.pack(pady=(6, 0))
 
     def _set_voice(self, voice: str) -> None:
         """Handle voice selection."""
@@ -774,10 +907,13 @@ Click on the image to set a horizontal crop line. Use Accept to apply the crop, 
     def on_enter(self) -> None:
         """Prepare step based on source mode."""
         if self.state.source_mode == "prompt":
+            # Hide image modify frame (prompt mode uses concept frame)
+            self._image_modify_frame.pack_forget()
             # Show concept frame with generate button
             self._concept_frame.pack(fill="x", pady=(12, 0))
             # Show crop frame (will be empty until generation)
             self._crop_frame.pack(fill="both", expand=True)
+            self._content_visible = True
             # Clear canvas if no generated image yet
             if self._generated_image is None:
                 self._crop_canvas.delete("all")
@@ -793,17 +929,236 @@ Click on the image to set a horizontal crop line. Use Accept to apply the crop, 
                 if not self._crop_accepted:
                     self.wizard._next_btn.configure(state="disabled")
         else:
-            # Image mode - hide concept frame
+            # Image mode
             self._concept_frame.pack_forget()
-            # Show crop section for image mode
+
             if self.state.image_path:
-                self._crop_frame.pack(fill="both", expand=True)
-                self._load_crop_image()
-                # Disable Next until crop accepted
-                if not self._crop_accepted:
-                    self.wizard._next_btn.configure(state="disabled")
+                # Auto-normalize if we haven't already
+                if self._normalized_image is None and not self._is_normalizing:
+                    # Show loading screen and start normalization
+                    # Don't show content yet - it will be shown after normalization
+                    self._content_visible = False
+                    self._start_normalization()
+                elif self._normalized_image is not None:
+                    # Already normalized - show the content
+                    self._show_image_mode_content()
+                    self._display_crop_image()
+                    if not self._crop_accepted:
+                        self.wizard._next_btn.configure(state="disabled")
+                else:
+                    # Still normalizing - show loading (shouldn't happen normally)
+                    self.show_loading("Normalizing image...")
             else:
                 self._crop_frame.pack_forget()
+                self._image_modify_frame.pack_forget()
+
+    def _show_image_mode_content(self) -> None:
+        """Show the image mode content (modify frame and crop frame)."""
+        if self._content_visible:
+            return
+        self._content_visible = True
+        self._image_modify_frame.pack(fill="x", pady=(12, 0))
+        self._crop_frame.pack(fill="both", expand=True)
+
+    def _start_normalization(self) -> None:
+        """Start image normalization in background thread."""
+        if self._is_normalizing:
+            return
+
+        self._is_normalizing = True
+        self.wizard._next_btn.configure(state="disabled")
+
+        # Show loading screen during normalization
+        self.show_loading("Normalizing image...")
+
+        # Run normalization in background thread
+        import threading
+        thread = threading.Thread(target=self._run_normalization, daemon=True)
+        thread.start()
+
+    def _run_normalization(self) -> None:
+        """Run image normalization in background thread."""
+        try:
+            from io import BytesIO
+            from ...api.gemini_client import get_api_key, call_gemini_image_edit
+            from ...api.prompt_builders import build_normalize_image_prompt
+            from ...api.gemini_client import load_image_as_base64
+
+            # Get API key
+            api_key = self.state.api_key or get_api_key(use_gui=True)
+
+            # Load source image as base64
+            image_b64 = load_image_as_base64(self.state.image_path)
+
+            # Build normalization prompt
+            prompt = build_normalize_image_prompt()
+
+            # Call Gemini to normalize
+            result_bytes = call_gemini_image_edit(
+                api_key=api_key,
+                prompt=prompt,
+                image_b64=image_b64,
+                skip_background_removal=True,  # Don't remove BG at this step
+            )
+
+            if result_bytes:
+                # Convert bytes to PIL Image
+                self._normalized_image = Image.open(BytesIO(result_bytes)).convert("RGBA")
+                # Schedule UI update on main thread
+                self.wizard.root.after(0, self._on_normalization_complete)
+            else:
+                self.wizard.root.after(0, lambda: self._on_normalization_error("No image returned"))
+
+        except Exception as e:
+            error_msg = str(e)
+            self.wizard.root.after(0, lambda: self._on_normalization_error(error_msg))
+
+    def _on_normalization_complete(self) -> None:
+        """Handle successful normalization."""
+        self._is_normalizing = False
+
+        # Hide loading screen and show content
+        self.hide_loading()
+        self._show_image_mode_content()
+
+        self._image_status.configure(text="Image normalized!", fg=ACCENT_COLOR)
+        self._modify_btn.configure(state="normal")
+        # Hide reset button (nothing to reset to yet)
+        self._reset_to_normalized_btn.pack_forget()
+
+        # Store as original for crop
+        self._crop_original_img = self._normalized_image.copy()
+        self._original_image_backup = self._normalized_image.copy()
+
+        # Show normalized image
+        self._display_crop_image()
+
+        # Disable Next until crop is accepted
+        self.wizard._next_btn.configure(state="disabled")
+
+    def _on_normalization_error(self, error: str) -> None:
+        """Handle normalization error - fall back to original image."""
+        self._is_normalizing = False
+
+        # Hide loading screen and show content
+        self.hide_loading()
+        self._show_image_mode_content()
+
+        self._image_status.configure(text=f"Normalization skipped: {error[:50]}...", fg="#ff5555")
+        self._modify_btn.configure(state="normal")
+
+        # Use original image without normalization
+        self._load_crop_image()
+        self.wizard._next_btn.configure(state="disabled")
+
+    def _on_modify_click(self) -> None:
+        """Handle Modify Character button click."""
+        instructions = self._modify_text.get("1.0", "end").strip()
+        if not instructions:
+            messagebox.showerror("Missing Instructions", "Please describe the changes you want to make.")
+            return
+
+        if self._is_normalizing:
+            messagebox.showwarning("Please Wait", "Please wait for normalization to complete.")
+            return
+
+        # Disable button and show status
+        self._modify_btn.configure(state="disabled")
+        self._image_status.configure(text="Modifying character...", fg=TEXT_SECONDARY)
+        self.wizard._next_btn.configure(state="disabled")
+
+        # Run modification in background thread
+        import threading
+        thread = threading.Thread(target=lambda: self._run_modification(instructions), daemon=True)
+        thread.start()
+
+    def _run_modification(self, instructions: str) -> None:
+        """Run character modification in background thread."""
+        try:
+            from io import BytesIO
+            from ...api.gemini_client import get_api_key, call_gemini_image_edit
+            from ...api.prompt_builders import build_character_modification_prompt
+            from ...api.gemini_client import load_image_as_base64
+
+            # Get API key
+            api_key = self.state.api_key or get_api_key(use_gui=True)
+
+            # Use current image (normalized or original)
+            if self._crop_original_img is not None:
+                # Save current image to temp buffer for base64 encoding
+                buffer = BytesIO()
+                self._crop_original_img.save(buffer, format="PNG")
+                buffer.seek(0)
+                import base64
+                image_b64 = base64.b64encode(buffer.read()).decode("utf-8")
+            else:
+                # Fall back to source file
+                image_b64 = load_image_as_base64(self.state.image_path)
+
+            # Build modification prompt
+            prompt = build_character_modification_prompt(instructions)
+
+            # Call Gemini to modify
+            result_bytes = call_gemini_image_edit(
+                api_key=api_key,
+                prompt=prompt,
+                image_b64=image_b64,
+                skip_background_removal=True,
+            )
+
+            if result_bytes:
+                # Convert bytes to PIL Image
+                modified_image = Image.open(BytesIO(result_bytes)).convert("RGBA")
+                # Schedule UI update on main thread
+                self.wizard.root.after(0, lambda img=modified_image: self._on_modification_complete(img))
+            else:
+                self.wizard.root.after(0, lambda: self._on_modification_error("No image returned"))
+
+        except Exception as e:
+            error_msg = str(e)
+            self.wizard.root.after(0, lambda: self._on_modification_error(error_msg))
+
+    def _on_modification_complete(self, modified_image: Image.Image) -> None:
+        """Handle successful modification."""
+        self._image_status.configure(text="Character modified!", fg=ACCENT_COLOR)
+        self._modify_btn.configure(state="normal")
+
+        # Update current image (but keep _normalized_image as reset point)
+        self._crop_original_img = modified_image.copy()
+        # Keep _normalized_image unchanged - it's the reset point
+
+        # Show reset button so user can go back to normalized version
+        self._reset_to_normalized_btn.pack(side="left")
+
+        # Show modified image and reset crop state
+        self._crop_accepted = False
+        self._display_crop_image()
+
+        # Disable Next until crop is accepted
+        self.wizard._next_btn.configure(state="disabled")
+
+    def _on_modification_error(self, error: str) -> None:
+        """Handle modification error."""
+        self._image_status.configure(text=f"Error: {error[:50]}...", fg="#ff5555")
+        self._modify_btn.configure(state="normal")
+
+    def _on_reset_to_normalized(self) -> None:
+        """Reset to the normalized image (undo modifications)."""
+        if self._normalized_image is None:
+            return
+
+        # Reset to normalized image
+        self._crop_original_img = self._normalized_image.copy()
+        self._crop_accepted = False
+
+        # Update display
+        self._display_crop_image()
+
+        # Hide reset button
+        self._reset_to_normalized_btn.pack_forget()
+
+        self._image_status.configure(text="Reset to normalized image.", fg=ACCENT_COLOR)
+        self.wizard._next_btn.configure(state="disabled")
 
     def validate(self) -> bool:
         if not self._voice_var.get():
@@ -880,20 +1235,49 @@ class OptionsStep(WizardStep):
 
     STEP_ID = "options"
     STEP_TITLE = "Options"
-    STEP_HELP = """Outfit and Expression Selection
+    STEP_HELP = """Generation Options
 
-Outfits:
-Select which outfit types to generate. "Base" (the original outfit) is always included.
+This step selects which outfits and expressions to generate.
 
-For each outfit you can choose:
-- Random: AI picks from our database of outfit descriptions
-- Custom: You write your own outfit description
-- Standard (Uniform only): Uses reference-matched school uniforms
+INCLUDE BASE IMAGE AS OUTFIT?
+Choose whether your original character image (with its current outfit) should be included as one of the final outfits.
+- Yes: The base image becomes the "Base" outfit
+- No: Only generated outfits are included
 
-Expression Count:
-Neutral expression (0) is always generated. Select additional expressions you want.
+OUTFITS (Left Column)
+Check the box next to each outfit type you want to generate.
 
-Tip: More outfits and expressions = longer generation time."""
+Available types: Casual, Formal, Athletic, Swimsuit, Underwear, Uniform
+
+For each outfit, choose a generation mode:
+
+Random Mode
+The AI generates a unique outfit description based on the character's archetype. Each generation produces different results.
+
+Custom Mode
+You write the outfit description. A text box appears where you can describe exactly what you want (e.g., "red sundress with white polka dots").
+
+Standard Mode (Uniform only)
+Only available for Young Woman/Man archetypes. Uses reference images to generate a consistent school uniform style.
+
+Note: Underwear uses a tiered fallback system due to content filtering. If one description is blocked, the system tries progressively safer alternatives.
+
+CUSTOM OUTFITS
+Click "+ Add Custom Outfit" to create additional outfit types with your own name and description. Maximum 15 total outfits.
+
+EXPRESSIONS (Right Column)
+Check which expressions to generate for each outfit.
+
+Expression 0 (neutral) is always included. Standard expressions:
+1-Happy, 2-Sad, 3-Angry, 4-Surprised, 5-Disgusted, 6-Afraid, 7-Shy, 8-Smug, 9-Embarrassed, 10-Pout, 11-Loving, 12-Determined
+
+CUSTOM EXPRESSIONS
+Click "+ Add Custom Expression" to add your own expressions with a description. The system auto-assigns the next available number.
+
+PERFORMANCE NOTE
+More outfits and expressions = longer generation time. Each outfit generates all selected expressions, so 6 outfits x 12 expressions = 72 images.
+
+Click Next when you've made your selections."""
 
     MAX_OUTFITS = 15
     MAX_EXPRESSIONS = 30
@@ -906,6 +1290,9 @@ Tip: More outfits and expressions = longer generation time."""
         self._expr_vars: Dict[str, tk.IntVar] = {}
         self._uniform_standard_rb: Optional[ttk.Radiobutton] = None
         self._uniform_row: Optional[tk.Frame] = None  # Track uniform row for hiding
+
+        # Base outfit option
+        self._use_base_as_outfit_var: Optional[tk.IntVar] = None
 
         # Custom outfit/expression tracking
         self._custom_outfits: List[Dict] = []  # [{frame, name_entry, desc_entry}]
@@ -937,6 +1324,58 @@ Tip: More outfits and expressions = longer generation time."""
         left_col = tk.Frame(columns, bg=BG_COLOR)
         left_col.pack(side="left", fill="both", expand=True, padx=(0, 10))
 
+        # Include Base Image as Outfit? - highlighted frame
+        base_outfit_frame = tk.Frame(left_col, bg=CARD_BG, padx=12, pady=10,
+                                     highlightbackground=ACCENT_COLOR, highlightthickness=2)
+        base_outfit_frame.pack(fill="x", pady=(0, 12))
+
+        tk.Label(
+            base_outfit_frame,
+            text="Include Base Image as Outfit?",
+            bg=CARD_BG,
+            fg=ACCENT_COLOR,
+            font=SECTION_FONT,
+        ).pack(anchor="w")
+
+        tk.Label(
+            base_outfit_frame,
+            text="Include the base character image as one of the outfits?",
+            bg=CARD_BG,
+            fg=TEXT_SECONDARY,
+            font=SMALL_FONT,
+        ).pack(anchor="w", pady=(2, 6))
+
+        # Yes/No radio buttons
+        self._use_base_as_outfit_var = tk.IntVar(value=1)  # Default to Yes
+        base_option_btns = tk.Frame(base_outfit_frame, bg=CARD_BG)
+        base_option_btns.pack(anchor="w")
+
+        tk.Radiobutton(
+            base_option_btns,
+            text="Yes - Include as 'Base' outfit",
+            variable=self._use_base_as_outfit_var,
+            value=1,
+            bg=CARD_BG,
+            fg=TEXT_COLOR,
+            selectcolor=BG_COLOR,
+            activebackground=CARD_BG,
+            activeforeground=TEXT_COLOR,
+            font=BODY_FONT,
+        ).pack(side="left", padx=(0, 16))
+
+        tk.Radiobutton(
+            base_option_btns,
+            text="No - Do not include",
+            variable=self._use_base_as_outfit_var,
+            value=0,
+            bg=CARD_BG,
+            fg=TEXT_COLOR,
+            selectcolor=BG_COLOR,
+            activebackground=CARD_BG,
+            activeforeground=TEXT_COLOR,
+            font=BODY_FONT,
+        ).pack(side="left")
+
         tk.Label(
             left_col,
             text="Outfits",
@@ -947,7 +1386,7 @@ Tip: More outfits and expressions = longer generation time."""
 
         tk.Label(
             left_col,
-            text="Base outfit is always included",
+            text="Select additional outfits to generate",
             bg=BG_COLOR,
             fg=TEXT_SECONDARY,
             font=SMALL_FONT,
@@ -1347,5 +1786,8 @@ Tip: More outfits and expressions = longer generation time."""
         self.state.selected_outfits = selected
         self.state.outfit_prompt_config = config
         self.state.expressions_sequence = expr_seq
+
+        # Save base outfit option
+        self.state.use_base_as_outfit = bool(self._use_base_as_outfit_var.get())
 
         return True

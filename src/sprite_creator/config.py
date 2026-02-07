@@ -5,6 +5,7 @@ constants.py
 All global paths, constants, and static tables for the Gemini sprite pipeline.
 """
 
+import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -14,11 +15,37 @@ from typing import Dict, List, Tuple
 APP_NAME = "AI Sprite Creator"
 APP_VERSION = "2.1.0"
 
-# Base directory for this package
-SPRITE_CREATOR_DIR = Path(__file__).resolve().parent
+
+def get_resource_path(relative_path: str = "") -> Path:
+    """
+    Get the path to a resource, handling both development and frozen (PyInstaller) modes.
+
+    In development: Returns path relative to the sprite_creator package directory.
+    When frozen: Returns path relative to PyInstaller's _MEIPASS temp directory.
+
+    Args:
+        relative_path: Path relative to the base directory (e.g., "data/names.csv")
+
+    Returns:
+        Absolute Path to the resource
+    """
+    if getattr(sys, 'frozen', False):
+        # Running as compiled .exe - PyInstaller extracts to _MEIPASS
+        base_path = Path(sys._MEIPASS)
+    else:
+        # Running in development - use the package directory
+        base_path = Path(__file__).resolve().parent
+
+    if relative_path:
+        return base_path / relative_path
+    return base_path
+
+
+# Base directory for this package (or frozen bundle)
+SPRITE_CREATOR_DIR = get_resource_path()
 
 # Data directory (contains CSVs and reference sprites)
-DATA_DIR = SPRITE_CREATOR_DIR / "data"
+DATA_DIR = get_resource_path("data")
 
 # Paths for configuration and data files
 CONFIG_PATH = Path.home() / ".st_gemini_config.json"
@@ -127,55 +154,68 @@ GENDER_ARCHETYPES: List[Tuple[str, str]] = [
     ("fatherly man", "m"),
 ]
 
-# Safety fallback prompts for underwear outfit generation
-# Used when safety filters block random CSV prompts
-SAFETY_FALLBACK_UNDERWEAR_PROMPTS: Dict[str, str] = {
-    "young woman": (
-        "a comfortable cotton bralette in a neutral color with soft elastic, "
-        "paired with matching cotton high-waisted briefs, simple everyday basics"
-    ),
-    "adult woman": (
-        "a classic supportive bra in a neutral tone with wide straps and full coverage, "
-        "paired with matching high-waisted briefs, comfortable everyday essentials"
-    ),
-    "motherly woman": (
-        "a supportive full-coverage bra in a soft neutral color with wide straps, "
-        "paired with matching high-waisted briefs, practical everyday comfort"
-    ),
-    "young man": (
-        "classic cotton boxer briefs in a solid neutral color with comfortable elastic waistband, "
-        "simple everyday basics"
-    ),
-    "adult man": (
-        "comfortable cotton boxer briefs in a neutral color with supportive fit and elastic waistband, "
-        "practical everyday essentials"
-    ),
-    "fatherly man": (
-        "classic supportive boxer briefs in a solid neutral tone with comfortable elastic waistband, "
-        "practical everyday basics"
-    ),
+# ═══════════════════════════════════════════════════════════════════════════════
+# UNDERWEAR TIER SYSTEM
+# ═══════════════════════════════════════════════════════════════════════════════
+# Underwear prompts bypass Gemini text generation entirely due to high safety filter rates.
+# Uses a tiered fallback system: Tier 0 (random with variety) -> Tier 1-N (ordered fallback)
+
+# Female archetypes that get color variety in Tier 0
+FEMALE_ARCHETYPES: List[str] = ["young woman", "adult woman", "motherly woman"]
+
+# Color pool for female Tier 0 variety
+UNDERWEAR_COLORS: List[str] = [
+    "White", "Black", "Pink", "Cream", "Light blue", "Lavender",
+    "Gray", "Yellow", "Mint", "Coral", "Red", "Navy"
+]
+
+# Non-bottom tier prompts for Tier 0 random selection (excludes most reliable fallback)
+UNDERWEAR_TIER0_PROMPTS: Dict[str, List[str]] = {
+    "young woman": ["Trendy underwear", "Trendy undergarments", "Cute undergarments"],
+    "adult woman": ["Chic underwear", "Stylish underwear", "Elegant underwear"],
+    "motherly woman": ["Comfortable undergarments", "Practical undergarments"],
+    "young man": ["Simple undergarments", "Basic undergarments"],
+    "adult man": ["Simple undergarments", "Basic undergarments"],
+    "fatherly man": ["Simple undergarments", "Basic undergarments"],
 }
 
-# Tier 4: Ultra-generic underwear prompts with no specific garment names
-# Used when Tier 3 prompts (which mention bra/briefs) are still blocked
-SAFETY_FALLBACK_UNDERWEAR_TIER4: Dict[str, str] = {
-    "young woman": "simple, comfortable underwear that suit this character",
-    "adult woman": "simple, comfortable underwear that suit this character",
-    "motherly woman": "simple, comfortable underwear that suit this character",
-    "young man": "simple, comfortable underwear that suit this character",
-    "adult man": "simple, comfortable underwear that suit this character",
-    "fatherly man": "simple, comfortable underwear that suit this character",
-}
-
-# Tier 5: Athletic underwear alternative (sports bra + running shorts)
-# Last resort before skipping - framed as athletic wear to pass filters
-SAFETY_FALLBACK_ATHLETIC_UNDERWEAR: Dict[str, str] = {
-    "young woman": "a cute cropped sports bra in pastel pink with very short running shorts, youthful athletic style",
-    "adult woman": "a sleek fitted sports bra in black with very short running shorts, confident athletic look",
-    "motherly woman": "a comfortable supportive sports bra in soft blue with modest running shorts, relaxed athletic style",
-    "young man": "very short athletic running shorts in bright colors, no shirt, energetic sporty look",
-    "adult man": "fitted athletic compression shorts in dark gray, no shirt, mature athletic build",
-    "fatherly man": "comfortable athletic shorts in navy blue, no shirt, relaxed dad-bod athletic style",
+# Ordered fallback tiers (Tier 1 through N) - tried in order when Tier 0 fails
+UNDERWEAR_FALLBACK_TIERS: Dict[str, List[str]] = {
+    "young woman": [
+        "Trendy underwear",
+        "Trendy undergarments",
+        "Cute undergarments",
+        "Pink undergarments",
+        "Modern undergarments",
+    ],
+    "adult woman": [
+        "Chic underwear",
+        "Stylish underwear",
+        "Elegant underwear",
+        "Pink undergarments",
+        "Modern undergarments",
+    ],
+    "motherly woman": [
+        "Comfortable undergarments",
+        "Practical undergarments",
+        "Modest undergarments",
+        "Modern undergarments",
+    ],
+    "young man": [
+        "Simple undergarments",
+        "Basic undergarments",
+        "Cotton underwear",
+    ],
+    "adult man": [
+        "Simple undergarments",
+        "Basic undergarments",
+        "Cotton underwear",
+    ],
+    "fatherly man": [
+        "Simple undergarments",
+        "Basic undergarments",
+        "Cotton underwear",
+    ],
 }
 
 # Safety fallback prompts for expressions that may trigger safety filters

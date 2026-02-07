@@ -645,6 +645,64 @@ def call_gemini_image_edit(
     )
 
 
+def call_gemini_text(
+    api_key: str,
+    prompt: str,
+    temperature: float = 1.0,
+) -> str:
+    """
+    Call Gemini text API and return the response text.
+
+    Used for generating outfit descriptions dynamically.
+
+    Args:
+        api_key: Google Gemini API key.
+        prompt: Text prompt to send.
+        temperature: Sampling temperature (0.0-2.0, default 1.0).
+
+    Returns:
+        Generated text response.
+
+    Raises:
+        GeminiAPIError: If API call fails.
+    """
+    # Use text model, not image model
+    text_model = "gemini-2.0-flash"
+    text_url = f"https://generativelanguage.googleapis.com/v1beta/models/{text_model}:generateContent"
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": temperature}
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key
+    }
+
+    try:
+        response = requests.post(text_url, headers=headers, json=payload)
+
+        if not response.ok:
+            raise GeminiAPIError(f"Gemini text API error {response.status_code}: {response.text[:200]}")
+
+        data = response.json()
+
+        # Extract text from response
+        candidates = data.get("candidates", [])
+        if candidates:
+            content = candidates[0].get("content", {})
+            parts = content.get("parts", [])
+            if parts:
+                return parts[0].get("text", "").strip()
+
+        raise GeminiAPIError("No text in Gemini response")
+
+    except GeminiAPIError:
+        raise
+    except Exception as e:
+        raise GeminiAPIError(f"Gemini text API call failed: {e}")
+
+
 def call_gemini_text_or_refs(
     api_key: str,
     prompt: str,

@@ -14,6 +14,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from tkinter import messagebox
 import tkinter as tk
@@ -21,21 +22,52 @@ import yaml
 from PIL import Image as PILImage
 
 from .sdk_utils import SDK_VERSION, SDK_FOLDER_NAME, download_and_setup_sdk
+from ...config import get_resource_path
 
-# Paths relative to this module
-MODULE_DIR = Path(__file__).parent
-SPRITE_CREATOR_DIR = MODULE_DIR.parent
-SRC_DIR = SPRITE_CREATOR_DIR.parent
-PROJECT_ROOT = SRC_DIR.parent
+
+def _get_base_path() -> Path:
+    """Get the base path for frozen or development mode."""
+    if getattr(sys, 'frozen', False):
+        # Frozen - PyInstaller extracts to _MEIPASS
+        return Path(sys._MEIPASS)
+    else:
+        # Development - parent of tools/tester
+        return Path(__file__).parent.parent.parent
+
+
+def _get_writable_base() -> Path:
+    """Get a writable base directory for project root operations."""
+    if getattr(sys, 'frozen', False):
+        # Frozen - use user's home directory
+        return Path.home() / ".sprite_creator"
+    else:
+        # Development - use project root
+        return Path(__file__).parent.parent.parent.parent.parent
+
+
+# Paths relative to this module (frozen-app compatible)
+MODULE_DIR = get_resource_path("tools/tester")  # tools/tester/
 
 # Template files (bundled with tester for standalone operation)
-TEMPLATES_DIR = MODULE_DIR / "templates"
+TEMPLATES_DIR = get_resource_path("tools/tester/templates")
+
+# Writable paths (for SDK and test project)
+WRITABLE_BASE = _get_writable_base()
 
 # Ren'Py SDK location - check environment variable first, then default
-SDK_DIR = Path(os.environ.get("RENPY_SDK_PATH", PROJECT_ROOT / SDK_FOLDER_NAME))
+SDK_DIR = Path(os.environ.get("RENPY_SDK_PATH", WRITABLE_BASE / SDK_FOLDER_NAME))
 
-# Test project directory (gitignored)
-TEST_PROJECT_DIR = MODULE_DIR / "_test_project"
+# Test project directory - use a temp directory for writable output
+def _get_test_project_dir() -> Path:
+    """Get the test project directory (writable location)."""
+    if getattr(sys, 'frozen', False):
+        # Frozen - use temp directory
+        return Path(tempfile.gettempdir()) / "sprite_creator_test"
+    else:
+        # Development - use the existing location
+        return Path(__file__).parent / "_test_project"
+
+TEST_PROJECT_DIR = _get_test_project_dir()
 
 
 def find_renpy_executable() -> Path | None:
@@ -605,7 +637,7 @@ def create_test_project(char_dir: Path) -> Path | None:
         print(f"[INFO] Copied template: {filename}")
 
     # Copy background files for preview
-    backgrounds_src = SPRITE_CREATOR_DIR / "data" / "reference_sprites" / "backgrounds"
+    backgrounds_src = get_resource_path("data/reference_sprites/backgrounds")
     backgrounds_dst = game_dir / "backgrounds"
     if backgrounds_src.exists():
         backgrounds_dst.mkdir(parents=True, exist_ok=True)

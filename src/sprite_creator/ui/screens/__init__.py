@@ -9,7 +9,7 @@ from .base import WizardStep
 # Re-export WizardState from core for backward compatibility
 from ...core.models import WizardState
 from .setup_steps import SourceStep, CharacterStep, OptionsStep
-from .generation_steps import BaseGenerationStep, PromptGenerationStep
+from .generation_steps import ReviewStep
 from .outfit_steps import OutfitReviewStep
 from .expression_steps import ExpressionReviewStep
 from .finalization_steps import EyeLineStep, ScaleStep, SummaryStep
@@ -23,8 +23,7 @@ __all__ = [
     "CharacterStep",
     "OptionsStep",
     # Generation steps
-    "BaseGenerationStep",
-    "PromptGenerationStep",
+    "ReviewStep",
     # Outfit review
     "OutfitReviewStep",
     # Expression review

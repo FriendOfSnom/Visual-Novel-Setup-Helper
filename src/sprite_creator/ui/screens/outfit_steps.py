@@ -57,22 +57,47 @@ class OutfitReviewStep(WizardStep):
     STEP_TITLE = "Outfits"
     STEP_HELP = """Outfit Review
 
-Review the generated outfits and adjust as needed.
+This step shows all generated outfits. Scroll horizontally to see them all.
 
-Per-Outfit Options:
-- Regen (same): Regenerate with the same prompt
-- Regen (new): Regenerate with a different randomly selected prompt
-- Cleanup BG: Adjust tolerance/depth sliders to clean background edges
-- Manual BG: Switch to click-to-remove background mode
+PREVIEW BACKGROUND (Top Right)
+Use the dropdown to preview outfits on different backgrounds:
+- Black/White: Solid colors to check edges
+- Game backgrounds: If available, shows how outfits look in-game
 
-Cleanup Sliders (when in rembg mode):
-- Tolerance: How similar a pixel must be to be removed (higher = more aggressive)
-- Depth: How many passes of edge cleanup to apply (higher = cleaner edges)
+OUTFIT CARDS
+Each card shows one generated outfit with controls below.
 
-Background Preview:
-Use the dropdown to preview how outfits look on different backgrounds.
+REGENERATION BUTTONS
+Regen Same Outfit: Generate a new image using the same outfit description. Useful if the pose or quality isn't right but you like the outfit concept.
 
-Accept All when satisfied to continue to expression generation."""
+Regen New Outfit: Generate with a completely different random outfit description. Use this to try a different look entirely.
+
+Note: "Regen Same Outfit" is hidden for underwear because the tier system makes same-prompt regeneration unreliable.
+
+BACKGROUND REMOVAL (Auto Mode)
+When an outfit shows the "rembg" sliders:
+
+Tolerance (0-150): How aggressively to remove edge pixels.
+- Low values (0-30): Only removes very similar colors
+- High values (100+): Removes more, but may eat into the character
+- Default: 50
+
+Depth (0-50): How many cleanup passes to run.
+- Low values (0-5): Light cleanup
+- High values (20+): More aggressive edge cleaning
+- Default: 5
+
+Click "Apply" after adjusting sliders to see the result.
+
+MANUAL MODE
+Click "Switch to Manual BG Removal" to use click-based removal instead. In manual mode, you click on areas to remove (flood-fill style).
+
+Click "Switch to Auto BG Removal" to return to slider-based mode.
+
+NAVIGATION
+Use mouse wheel to scroll horizontally through outfits.
+
+When satisfied with all outfits, click Next to proceed to expression generation."""
 
     def __init__(self, wizard, state: WizardState):
         super().__init__(wizard, state)
@@ -84,7 +109,6 @@ Accept All when satisfied to continue to expression generation."""
         self._tolerance_vars: List[tk.IntVar] = []
         self._depth_vars: List[tk.IntVar] = []
         self._bg_var: Optional[tk.StringVar] = None
-        self._status_label: Optional[tk.Label] = None
         self._is_generating: bool = False
         self._original_preview_sizes: Dict[int, int] = {}  # Track original max_h per outfit
 
@@ -142,17 +166,8 @@ Accept All when satisfied to continue to expression generation."""
         self._canvas.create_window((0, 0), window=self._inner_frame, anchor="nw")
         self._inner_frame.bind("<Configure>", self._on_frame_configure)
 
-        # Status label
-        self._status_label = tk.Label(
-            parent,
-            text="",
-            bg=BG_COLOR,
-            fg=ACCENT_COLOR,
-            font=SMALL_FONT,
-        )
-        self._status_label.pack(pady=(4, 0))
-
         # Note: Accept All / Regenerate All buttons removed - use Next button to accept
+        # Note: Status label removed to save vertical space
 
     def _get_background_options(self) -> List[Tuple[str, Optional[Path]]]:
         """Get available background options for preview."""
@@ -214,13 +229,12 @@ Accept All when satisfied to continue to expression generation."""
             return
 
         self._is_generating = True
-        self._status_label.configure(text="Generating outfits...")
         self.show_loading("Generating outfits...")
 
         def generate():
             try:
-                paths, cleanup_data = self._do_outfit_generation()
-                self.wizard.root.after(0, lambda p=paths, c=cleanup_data: self._on_generation_complete(p, c))
+                paths, cleanup_data, used_prompts = self._do_outfit_generation()
+                self.wizard.root.after(0, lambda p=paths, c=cleanup_data, u=used_prompts: self._on_generation_complete(p, c, u))
             except Exception as e:
                 error_msg = str(e)
                 self.wizard.root.after(0, lambda msg=error_msg: self._on_generation_error(msg))
@@ -228,36 +242,50 @@ Accept All when satisfied to continue to expression generation."""
         thread = threading.Thread(target=generate, daemon=True)
         thread.start()
 
-    def _do_outfit_generation(self) -> Tuple[List[Path], List[Tuple[bytes, bytes]]]:
+    def _do_outfit_generation(self) -> Tuple[List[Path], List[Tuple[bytes, bytes]], Dict[str, str]]:
         """Perform outfit generation."""
-        from ...processing import generate_outfits_once
-        from ...api import load_outfit_prompts, build_outfit_prompts_with_config
+        from ...processing import generate_outfits_once, get_unique_folder_name
+        from ...api import build_outfit_prompts_with_config
         from ..api_setup import ensure_api_key
 
         if not self.state.api_key:
             self.state.api_key = ensure_api_key()
 
-        # Load outfit database
-        outfit_db = load_outfit_prompts(DATA_DIR)
+        # Create character folder if it doesn't exist
+        if not self.state.character_folder:
+            if not self.state.output_root:
+                raise ValueError("Output folder not set. Please select an output folder before generating.")
+            self.state.character_folder = self.state.output_root / get_unique_folder_name(
+                self.state.output_root, self.state.display_name
+            )
+        self.state.character_folder.mkdir(parents=True, exist_ok=True)
 
-        # Build outfit prompts with configuration
+        # Copy base pose to character folder if not already there
+        base_dest = self.state.character_folder / "a_base.png"
+        if self.state.base_pose_path and self.state.base_pose_path.exists() and not base_dest.exists():
+            import shutil
+            shutil.copy2(self.state.base_pose_path, base_dest)
+            # Update base_pose_path to point to the new location
+            self.state.base_pose_path = base_dest
+
+        # Build outfit prompts with configuration (uses Gemini text API for random mode)
+        # Note: For underwear, this returns a placeholder; actual prompt determined at generation
         outfit_descriptions = build_outfit_prompts_with_config(
+            self.state.api_key,
             self.state.archetype_label,
             self.state.gender_style,
             self.state.selected_outfits,
-            outfit_db,
             self.state.outfit_prompt_config,
         )
-
-        # Store outfit prompts for potential regeneration
-        self.state.outfit_prompts = outfit_descriptions
 
         # Create outfits directory
         outfits_dir = self.state.character_folder / "a" / "outfits"
         outfits_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate outfits using the base pose
-        paths, cleanup_data = generate_outfits_once(
+        # Returns (paths, cleanup_data, used_prompts) where used_prompts contains
+        # the actual prompts that succeeded (important for underwear tier system)
+        paths, cleanup_data, used_prompts = generate_outfits_once(
             api_key=self.state.api_key,
             base_pose_path=self.state.base_pose_path,
             outfits_dir=outfits_dir,
@@ -265,14 +293,13 @@ Accept All when satisfied to continue to expression generation."""
             outfit_descriptions=outfit_descriptions,
             outfit_prompt_config=self.state.outfit_prompt_config,
             archetype_label=self.state.archetype_label,
-            outfit_database=outfit_db,
             include_base_outfit=self.state.use_base_as_outfit,
             for_interactive_review=True,
         )
 
-        return paths, cleanup_data
+        return paths, cleanup_data, used_prompts
 
-    def _on_generation_complete(self, paths: List[Path], cleanup_data: List[Tuple[bytes, bytes]]) -> None:
+    def _on_generation_complete(self, paths: List[Path], cleanup_data: List[Tuple[bytes, bytes]], used_prompts: Dict[str, str]) -> None:
         """Handle outfit generation completion."""
         self._is_generating = False
         self.hide_loading()
@@ -281,19 +308,28 @@ Accept All when satisfied to continue to expression generation."""
         self.state.outfit_cleanup_data = cleanup_data
         self.state.outfits_generated = True  # Mark as generated to prevent regeneration on back
 
+        # Store the actual prompts that succeeded (important for underwear tier system)
+        self.state.outfit_prompts = used_prompts
+
+        # Track which outfit keys actually succeeded (for expression step)
+        # This handles cases where outfits like underwear may be skipped due to safety filters
+        generated_keys = []
+        if self.state.use_base_as_outfit:
+            generated_keys.append("base")
+        generated_keys.extend(used_prompts.keys())
+        self.state.generated_outfit_keys = generated_keys
+
         # Initialize current bytes from rembg results
         self._current_bytes = [rembg_bytes for _, rembg_bytes in cleanup_data]
         self.state.current_outfit_bytes = self._current_bytes.copy()
 
         # Build outfit cards
         self._build_outfit_cards()
-        self._status_label.configure(text=f"Generated {len(paths)} outfits. Review and accept.")
 
     def _on_generation_error(self, error: str) -> None:
         """Handle generation error."""
         self._is_generating = False
         self.hide_loading()
-        self._status_label.configure(text=f"Error: {error}", fg="#ff5555")
         messagebox.showerror("Generation Error", f"Failed to generate outfits:\n\n{error}")
 
     def _load_existing_outfits(self) -> None:
@@ -310,7 +346,6 @@ Accept All when satisfied to continue to expression generation."""
                     self._current_bytes.append(b"")
 
         self._build_outfit_cards()
-        self._status_label.configure(text=f"{len(self.state.outfit_paths)} outfits loaded. Review and accept.")
 
     def _build_outfit_cards(self) -> None:
         """Build UI cards for each outfit."""
@@ -328,10 +363,8 @@ Accept All when satisfied to continue to expression generation."""
         canvas_h = self._canvas.winfo_height()
         max_thumb_h = max(int(canvas_h * 0.85), 450)  # Increased from 0.70/300
 
-        # Get outfit names
-        outfit_names = self.state.selected_outfits.copy()
-        if self.state.use_base_as_outfit and "base" not in [o.lower() for o in outfit_names]:
-            outfit_names.insert(0, "Base")
+        # Get outfit names (only those that succeeded generation)
+        outfit_names = self.state.generated_outfit_keys.copy() if self.state.generated_outfit_keys else []
 
         # Build cards
         for idx, (path, name) in enumerate(zip(self.state.outfit_paths, outfit_names)):
@@ -363,20 +396,30 @@ Accept All when satisfied to continue to expression generation."""
 
         # === GROUP 1: Regenerate buttons (horizontal, not for base) ===
         if name.lower() != "base":
+            # Check if this outfit uses standard_uniform mode (only one option, no "new outfit" needed)
+            outfit_config = self.state.outfit_prompt_config.get(name.lower(), {})
+            is_standard_uniform = outfit_config.get("use_standard_uniform", False)
+            is_underwear = name.lower() == "underwear"
+
             regen_frame = tk.Frame(card, bg=CARD_BG)
             regen_frame.pack(pady=(1, 1))
 
-            create_secondary_button(
-                regen_frame, "Regen Same Outfit",
-                lambda i=idx: self._regenerate_outfit(i, same_prompt=True),
-                width=14
-            ).pack(side="left", padx=(0, 4))
+            # Don't show "Regen Same Outfit" for underwear - the generation is too unreliable
+            # and uses a tier system that won't produce the same result anyway
+            if not is_underwear:
+                create_secondary_button(
+                    regen_frame, "Regen Same Outfit",
+                    lambda i=idx: self._regenerate_outfit(i, same_prompt=True),
+                    width=14
+                ).pack(side="left", padx=(0, 4))
 
-            create_secondary_button(
-                regen_frame, "Regen New Outfit",
-                lambda i=idx: self._regenerate_outfit(i, same_prompt=False),
-                width=14
-            ).pack(side="left")
+            # Only show "Regen New Outfit" if not using standard uniform
+            if not is_standard_uniform:
+                create_secondary_button(
+                    regen_frame, "Regen New Outfit",
+                    lambda i=idx: self._regenerate_outfit(i, same_prompt=False),
+                    width=14
+                ).pack(side="left")
 
         # BG mode and cleanup controls
         mode = self.state.outfit_bg_modes.get(idx, "rembg")
@@ -397,7 +440,7 @@ Accept All when satisfied to continue to expression generation."""
 
             tk.Scale(
                 cleanup_frame, from_=0, to=150, orient="horizontal",
-                variable=tol_var, length=120, showvalue=True,
+                variable=tol_var, length=280, showvalue=True,
                 font=("", 7), bg=CARD_BG, highlightthickness=0
             ).pack(side="left")
 
@@ -412,7 +455,7 @@ Accept All when satisfied to continue to expression generation."""
 
             tk.Scale(
                 cleanup_frame, from_=0, to=50, orient="horizontal",
-                variable=depth_var, length=120, showvalue=True,
+                variable=depth_var, length=280, showvalue=True,
                 font=("", 7), bg=CARD_BG, highlightthickness=0
             ).pack(side="left")
 
@@ -439,18 +482,16 @@ Accept All when satisfied to continue to expression generation."""
                 font=("", 8),
             ).pack(pady=(1, 0))
 
-            # Placeholders for vars (to keep index alignment)
-            self._tolerance_vars.append(tk.IntVar(value=0))
-            self._depth_vars.append(tk.IntVar(value=0))
+            # Placeholders for vars (to keep index alignment) - restore previous values to preserve settings
+            restored_tol = REMBG_EDGE_CLEANUP_TOLERANCE
+            restored_depth = REMBG_EDGE_CLEANUP_PASSES
+            if self.state.outfit_cleanup_settings and idx < len(self.state.outfit_cleanup_settings):
+                restored_tol = self.state.outfit_cleanup_settings[idx][0]
+                restored_depth = self.state.outfit_cleanup_settings[idx][1]
+            self._tolerance_vars.append(tk.IntVar(value=restored_tol))
+            self._depth_vars.append(tk.IntVar(value=restored_depth))
 
-            # === GROUP 2 replacement: Manual BG edit button ===
-            create_secondary_button(
-                card, "Edit Manual BG",
-                lambda i=idx: self._open_manual_bg(i),
-                width=14
-            ).pack(pady=(1, 0))
-
-            # === GROUP 3: BG Mode Switch ===
+            # === BG Mode Switch (no Edit button - BG removal handled in Expressions step) ===
             create_secondary_button(
                 card, "Switch to Auto BG Removal",
                 lambda i=idx: self._switch_to_auto(i),
@@ -477,7 +518,18 @@ Accept All when satisfied to continue to expression generation."""
             bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
         elif bg_path and bg_path.exists():
             bg = Image.open(bg_path).convert("RGBA")
-            bg = bg.resize(img.size, Image.LANCZOS)
+            # Center-bottom crop background to match character dimensions
+            bg_w, bg_h = bg.size
+            char_w, char_h = img.size
+            # Scale up if background is smaller than character
+            if bg_w < char_w or bg_h < char_h:
+                scale = max(char_w / bg_w, char_h / bg_h)
+                bg = bg.resize((int(bg_w * scale), int(bg_h * scale)), Image.LANCZOS)
+                bg_w, bg_h = bg.size
+            # Center-bottom crop to character dimensions
+            left = (bg_w - char_w) // 2
+            top = bg_h - char_h  # Bottom-aligned instead of center
+            bg = bg.crop((left, top, left + char_w, top + char_h))
         else:
             bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
 
@@ -520,8 +572,20 @@ Accept All when satisfied to continue to expression generation."""
 
         self._update_preview(idx)
 
+    def _save_cleanup_settings(self) -> None:
+        """Save current slider values to state (preserves settings when switching modes)."""
+        if not self._tolerance_vars or not self._depth_vars:
+            return
+        settings = []
+        for idx in range(len(self._tolerance_vars)):
+            settings.append((self._tolerance_vars[idx].get(), self._depth_vars[idx].get()))
+        self.state.outfit_cleanup_settings = settings
+
     def _switch_to_manual(self, idx: int) -> None:
         """Switch outfit to manual BG removal mode."""
+        # Save current cleanup settings before rebuilding (preserves slider values)
+        self._save_cleanup_settings()
+
         self.state.outfit_bg_modes[idx] = "manual"
         # Revert to original black bg bytes for manual editing
         if idx < len(self.state.outfit_cleanup_data) and self.state.outfit_cleanup_data[idx][0]:
@@ -536,6 +600,9 @@ Accept All when satisfied to continue to expression generation."""
 
     def _switch_to_auto(self, idx: int) -> None:
         """Switch outfit back to auto (rembg) mode."""
+        # Save current cleanup settings before rebuilding (preserves slider values)
+        self._save_cleanup_settings()
+
         self.state.outfit_bg_modes[idx] = "rembg"
         # Reset to rembg result
         if idx < len(self.state.outfit_cleanup_data):
@@ -544,58 +611,18 @@ Accept All when satisfied to continue to expression generation."""
             self.state.current_outfit_bytes = self._current_bytes.copy()
         self._build_outfit_cards()
 
-    def _open_manual_bg(self, idx: int) -> None:
-        """Open manual BG removal modal for outfit."""
-        if idx >= len(self.state.outfit_paths):
-            return
-
-        path = self.state.outfit_paths[idx]
-
-        # For manual BG removal, prefer original black-bg bytes from cleanup_data
-        # This avoids showing a white/transparent image from rembg processing
-        img_bytes = None
-        if idx < len(self.state.outfit_cleanup_data) and self.state.outfit_cleanup_data[idx][0]:
-            img_bytes = self.state.outfit_cleanup_data[idx][0]
-        elif idx < len(self._current_bytes) and self._current_bytes[idx]:
-            img_bytes = self._current_bytes[idx]
-        elif path.exists():
-            img_bytes = path.read_bytes()
-
-        if not img_bytes or len(img_bytes) < 100:
-            messagebox.showerror("Error", "No valid image data available for manual BG removal.")
-            return
-
-        # Write bytes to temp file for editing
-        temp_path = path.parent / f"_temp_manual_{idx}.png"
-        temp_path.write_bytes(img_bytes)
-
-        # Open manual removal (this is a blocking call)
-        from ..review_windows import click_to_remove_background
-        accepted = click_to_remove_background(temp_path, threshold=30)
-
-        if accepted:
-            # Load edited result
-            self._current_bytes[idx] = temp_path.read_bytes()
-            self.state.current_outfit_bytes = self._current_bytes.copy()
-            self._update_preview(idx)
-
-        # Clean up temp file
-        if temp_path.exists():
-            temp_path.unlink()
-
     def _regenerate_outfit(self, idx: int, same_prompt: bool = True) -> None:
         """Regenerate a single outfit."""
         if self._is_generating:
             return
 
         self._is_generating = True
-        self._status_label.configure(text=f"Regenerating outfit {idx + 1}...")
         self.show_loading(f"Regenerating outfit...")
 
         def regenerate():
             try:
-                new_path, new_cleanup = self._do_single_regeneration(idx, same_prompt)
-                self.wizard.root.after(0, lambda i=idx, p=new_path, c=new_cleanup: self._on_single_regen_complete(i, p, c))
+                new_path, new_cleanup, used_prompt = self._do_single_regeneration(idx, same_prompt)
+                self.wizard.root.after(0, lambda i=idx, p=new_path, c=new_cleanup, u=used_prompt: self._on_single_regen_complete(i, p, c, u))
             except Exception as e:
                 error_msg = str(e)
                 self.wizard.root.after(0, lambda msg=error_msg: self._on_generation_error(msg))
@@ -603,41 +630,106 @@ Accept All when satisfied to continue to expression generation."""
         thread = threading.Thread(target=regenerate, daemon=True)
         thread.start()
 
-    def _do_single_regeneration(self, idx: int, same_prompt: bool) -> Tuple[Path, Tuple[bytes, bytes]]:
-        """Regenerate a single outfit."""
-        from ...processing import generate_single_outfit
-        from ...api import load_outfit_prompts, build_outfit_prompts_with_config
+    def _do_single_regeneration(self, idx: int, same_prompt: bool) -> Tuple[Path, Tuple[bytes, bytes], str]:
+        """
+        Regenerate a single outfit.
 
-        outfit_names = self.state.selected_outfits.copy()
-        if self.state.use_base_as_outfit:
-            outfit_names.insert(0, "base")
+        For underwear with same_prompt=True: Try cached prompt up to 4 times.
+        For underwear with same_prompt=False: Start fresh from Tier 0.
+        For other outfits: Standard regeneration logic.
+
+        Returns:
+            Tuple of (path, (original_bytes, rembg_bytes), used_prompt)
+
+        Raises:
+            RuntimeError: If regeneration fails after all attempts.
+        """
+        from ...processing import generate_single_outfit
+        from ...api import build_outfit_prompts_with_config
+
+        # Use generated_outfit_keys which only includes outfits that succeeded
+        outfit_names = self.state.generated_outfit_keys.copy() if self.state.generated_outfit_keys else []
 
         outfit_key = outfit_names[idx]
+        outfits_dir = self.state.character_folder / "a" / "outfits"
+        config = self.state.outfit_prompt_config.get(outfit_key, {})
+        use_random = config.get("use_random", True)
 
-        # Load outfit database
-        outfit_db = load_outfit_prompts(DATA_DIR)
+        # =====================================================================
+        # UNDERWEAR: Special regeneration handling
+        # =====================================================================
+        if outfit_key == "underwear" and use_random:
+            if same_prompt:
+                # "Regen Same Outfit": Try the cached prompt once
+                cached_prompt = self.state.outfit_prompts.get(outfit_key) if self.state.outfit_prompts else None
 
-        # Get or generate outfit description
+                if cached_prompt:
+                    print(f"[Underwear Regen] Using cached prompt: \"{cached_prompt}\"")
+                    result = generate_single_outfit(
+                        api_key=self.state.api_key,
+                        base_pose_path=self.state.base_pose_path,
+                        outfits_dir=outfits_dir,
+                        gender_style=self.state.gender_style,
+                        outfit_key=outfit_key,
+                        outfit_desc=cached_prompt,
+                        outfit_prompt_config=self.state.outfit_prompt_config,
+                        archetype_label=self.state.archetype_label,
+                        for_interactive_review=True,
+                    )
+                    if result is not None:
+                        new_path, original_bytes, rembg_bytes, used_prompt = result
+                        return new_path, (original_bytes, rembg_bytes), used_prompt
+
+                    # Attempt failed
+                    raise RuntimeError(
+                        f"Could not regenerate underwear.\n\n"
+                        f"The prompt \"{cached_prompt}\" was blocked by safety filters.\n\n"
+                        f"Try \"Regen New Outfit\" instead for a different underwear style."
+                    )
+
+            # "Regen New Outfit" OR no cached prompt: Start fresh from Tier 0
+            # The tier system will be invoked by generate_single_outfit
+            result = generate_single_outfit(
+                api_key=self.state.api_key,
+                base_pose_path=self.state.base_pose_path,
+                outfits_dir=outfits_dir,
+                gender_style=self.state.gender_style,
+                outfit_key=outfit_key,
+                outfit_desc="",  # Empty - tier system will pick prompts
+                outfit_prompt_config=self.state.outfit_prompt_config,
+                archetype_label=self.state.archetype_label,
+                for_interactive_review=True,
+            )
+
+            if result is None:
+                raise RuntimeError(
+                    f"Failed to generate underwear outfit.\n\n"
+                    f"All tier prompts were blocked by safety filters."
+                )
+
+            new_path, original_bytes, rembg_bytes, used_prompt = result
+            # Update stored prompt with what actually worked
+            if not self.state.outfit_prompts:
+                self.state.outfit_prompts = {}
+            self.state.outfit_prompts[outfit_key] = used_prompt
+            return new_path, (original_bytes, rembg_bytes), used_prompt
+
+        # =====================================================================
+        # NON-UNDERWEAR: Standard regeneration
+        # =====================================================================
         if same_prompt and self.state.outfit_prompts and outfit_key in self.state.outfit_prompts:
             # Use existing prompt
             outfit_desc = self.state.outfit_prompts[outfit_key]
         else:
-            # Generate new random prompt
+            # Generate new random prompt via Gemini text API
             new_prompt_dict = build_outfit_prompts_with_config(
+                self.state.api_key,
                 self.state.archetype_label,
                 self.state.gender_style,
                 [outfit_key],
-                outfit_db,
                 self.state.outfit_prompt_config,
             )
             outfit_desc = new_prompt_dict[outfit_key]
-            # Update stored prompts
-            if not self.state.outfit_prompts:
-                self.state.outfit_prompts = {}
-            self.state.outfit_prompts[outfit_key] = outfit_desc
-
-        # Create outfits directory path
-        outfits_dir = self.state.character_folder / "a" / "outfits"
 
         result = generate_single_outfit(
             api_key=self.state.api_key,
@@ -648,35 +740,52 @@ Accept All when satisfied to continue to expression generation."""
             outfit_desc=outfit_desc,
             outfit_prompt_config=self.state.outfit_prompt_config,
             archetype_label=self.state.archetype_label,
-            outfit_database=outfit_db,
             for_interactive_review=True,
         )
 
         if result is None:
             raise RuntimeError(f"Failed to regenerate outfit: {outfit_key}")
 
-        new_path, original_bytes, rembg_bytes = result
-        return new_path, (original_bytes, rembg_bytes)
+        new_path, original_bytes, rembg_bytes, used_prompt = result
+        # Update stored prompts with what was actually used
+        if not self.state.outfit_prompts:
+            self.state.outfit_prompts = {}
+        self.state.outfit_prompts[outfit_key] = used_prompt
+        return new_path, (original_bytes, rembg_bytes), used_prompt
 
-    def _on_single_regen_complete(self, idx: int, new_path: Path, cleanup_data: Tuple[bytes, bytes]) -> None:
+    def _on_single_regen_complete(self, idx: int, new_path: Path, cleanup_data: Tuple[bytes, bytes], used_prompt: str) -> None:
         """Handle single outfit regeneration completion."""
         self._is_generating = False
         self.hide_loading()
 
-        # Update state
+        # Save current cleanup settings before rebuilding (preserves other outfits' settings)
+        self._save_cleanup_settings()
+
+        # Update state for regenerated outfit only
         self.state.outfit_paths[idx] = new_path
         self.state.outfit_cleanup_data[idx] = cleanup_data
         _, rembg_bytes = cleanup_data
         self._current_bytes[idx] = rembg_bytes
         self.state.current_outfit_bytes = self._current_bytes.copy()
 
-        # After regeneration, switch back to auto mode
+        # Update the cached prompt with what actually worked (important for underwear)
+        # Use generated_outfit_keys which only includes outfits that succeeded
+        outfit_names = self.state.generated_outfit_keys.copy() if self.state.generated_outfit_keys else []
+        outfit_key = outfit_names[idx]
+        if not self.state.outfit_prompts:
+            self.state.outfit_prompts = {}
+        self.state.outfit_prompts[outfit_key] = used_prompt
+
+        # After regeneration, switch back to auto mode for this outfit
         # (regen always produces auto-removed BG as the result)
         self.state.outfit_bg_modes[idx] = "rembg"
 
+        # Reset cleanup settings for regenerated outfit to defaults (since it's a new image)
+        if self.state.outfit_cleanup_settings and idx < len(self.state.outfit_cleanup_settings):
+            self.state.outfit_cleanup_settings[idx] = (REMBG_EDGE_CLEANUP_TOLERANCE, REMBG_EDGE_CLEANUP_PASSES)
+
         # Rebuild cards to show correct UI for mode
         self._build_outfit_cards()
-        self._status_label.configure(text=f"Outfit {idx + 1} regenerated.")
 
     def _on_regenerate_all(self) -> None:
         """Regenerate all outfits."""

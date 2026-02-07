@@ -29,6 +29,14 @@ __pycache__/
 src/sprite_creator/tester/_test_project/
 src/sprite_creator/tools/tester/_test_project/
 
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.bak
+
+# Distribution zip files (too large for GitHub repo)
+*.zip
+
 # OS files
 .DS_Store
 Thumbs.db

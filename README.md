@@ -1,4 +1,4 @@
-# Visual Novel Development Toolkit (v2.0.0)
+# Visual Novel Development Toolkit (v2.1.0)
 
 A comprehensive, AI-powered toolkit for creating visual novels with Ren'Py. This suite provides everything needed to create professional VN projects: from project setup and AI character generation to expression sheet creation.
 
@@ -31,34 +31,47 @@ Creates production-ready Ren'Py projects with custom character support.
 
 ---
 
-### **Tool 2: Gemini Character Creator**
+### **Tool 2: AI Sprite Creator**
 
-AI-powered character sprite generator using Google Gemini vision models.
+AI-powered character sprite generator using Google Gemini vision models. Features a guided 9-step wizard that walks you through the entire character creation process.
 
-**What it does:**
+**Wizard Steps:**
 
--   Generate character sprites from text prompts or reference images
--   Create multiple expressions (happy, sad, angry, neutral, etc.)
--   Generate multiple outfits (casual, uniform, etc.)
--   Automatically crop and scale sprites
--   Create game-ready folder structures
--   Generate `character.yml` metadata files
+1. **Source Selection** - Choose to create from an existing image or text prompt
+2. **Character Setup** - Set name, voice, archetype, and crop/modify the base image
+3. **Generation Options** - Select outfits (casual, formal, athletic, swimsuit, underwear, uniform) and expressions
+4. **Review** - Confirm selections before generation begins
+5. **Outfit Review** - Review generated outfits, adjust background removal, regenerate as needed
+6. **Expression Review** - Review expressions for each outfit, touch up backgrounds
+7. **Eye Line & Color** - Set eye position and pick name color from hair
+8. **Scale** - Compare with reference sprites to set in-game scale
+9. **Complete** - View summary and launch Sprite Tester
+
+**Key Features:**
+
+-   **Two creation modes**: Start from reference image or text description
+-   **Smart background removal**: Automatic rembg processing with tolerance/depth sliders
+-   **Manual touch-up**: Click-based flood fill for precise background cleanup
+-   **Per-outfit regeneration**: Regenerate individual outfits without starting over
+-   **Comprehensive help**: Built-in help button (?) on every step with detailed instructions
+-   **Safety handling**: Graceful fallback when Gemini's content filters block certain generations
 
 **Output Format:**
 
 ```
 character_name/
-├── character.yml          # Metadata (voice, scale, colors)
-└── a/                     # Pose folder (letter poses)
-    ├── faces/
-    │   └── face/
-    │       ├── happy.png
-    │       ├── sad.png
-    │       ├── angry.png
-    │       └── neutral.png
-    └── outfits/
-        ├── casual.png
-        └── uniform.png
+├── character.yml          # Metadata (voice, scale, eye line, colors)
+├── a/                     # Pose folder (one per outfit)
+│   ├── a.png              # Outfit image
+│   └── faces/
+│       └── face/
+│           ├── 0.png      # Neutral
+│           ├── 1.png      # Happy
+│           ├── 2.png      # Sad
+│           └── ...        # Additional expressions
+├── b/                     # Second outfit pose
+│   └── ...
+└── expression_sheets/     # Generated sprite sheets for reference
 ```
 
 **Integration:**
@@ -134,7 +147,8 @@ pyyaml
 requests
 beautifulsoup4
 pandas
-rembg  # Optional: for background removal experiments
+rembg              # Required for automatic background removal
+onnxruntime        # Required by rembg for ML model inference
 ```
 
 ---
@@ -158,11 +172,14 @@ start-windows.bat
 This launches the main menu where you can select:
 
 1. **Create new Ren'Py project** (Tool 1 - Project Scaffolder)
-2. **Create new character sprites** (Tool 2 - Gemini Character Creator)
+2. **Create new character sprites** (Tool 2 - AI Sprite Creator)
 3. **Generate expression sheets** (Utility tool)
    Q. Quit
 
 **Note:** Tool 3 (Visual Scene Editor) is planned for future implementation.
+
+**Getting Help:**
+Every step in the AI Sprite Creator has a **?** button in the footer. Click it to see detailed instructions for that step, including what each control does and how to use it effectively.
 
 ---
 
@@ -184,10 +201,16 @@ This launches the main menu where you can select:
 
     - Select option 2 from the menu
     - Choose output folder (e.g., Desktop or project's `game/images/characters/`)
-    - Enter character name and description
-    - Generate expressions and outfits with AI
-    - Review and crop results
-    - Save to character folder
+    - Follow the 9-step wizard:
+      - Select source (image upload or text prompt)
+      - Set character name, voice, and archetype
+      - Choose which outfits and expressions to generate
+      - Review and accept your selections
+      - Review generated outfits (adjust backgrounds, regenerate if needed)
+      - Review expressions for each outfit
+      - Set eye line and name color
+      - Adjust scale relative to reference sprites
+    - Character folder is automatically created with all files
 
 3. **Copy Characters to Project** (if needed)
 
@@ -301,20 +324,31 @@ Visual-Novel-Development-Toolkit/
 │   │       ├── pymage_size.py     # Image utilities
 │   │       └── effects.rpy        # Custom transforms & animations
 │   │
-│   ├── sprite_creator/            # Tool 2: Gemini Character Creator
-│   │   ├── pipeline.py            # Main orchestrator
-│   │   ├── constants.py           # Configuration and constants
-│   │   ├── expression_sheets.py   # Expression sheet generator
+│   ├── sprite_creator/            # Tool 2: AI Sprite Creator
+│   │   ├── __main__.py            # Entry point for standalone mode
+│   │   ├── config.py              # Configuration and constants
 │   │   ├── api/                   # Gemini API integration
+│   │   │   ├── gemini_client.py   # API calls, background removal
+│   │   │   └── prompt_builders.py # Prompt generation for outfits/expressions
+│   │   ├── core/                  # Core data models
+│   │   │   └── models.py          # WizardState and data classes
 │   │   ├── processing/            # Image processing workflows
+│   │   │   ├── pose_processor.py  # Outfit generation
+│   │   │   ├── expression_generator.py  # Expression generation
+│   │   │   └── character_finalizer.py   # Final file creation
 │   │   ├── ui/                    # Tkinter UI components
+│   │   │   ├── full_wizard.py     # Main wizard window
+│   │   │   ├── screens/           # Individual wizard steps
+│   │   │   ├── tk_common.py       # Shared UI components
+│   │   │   └── review_windows.py  # Manual BG removal tool
+│   │   ├── tools/                 # Sub-tools
+│   │   │   └── tester/            # Sprite Tester preview tool
 │   │   └── data/                  # Data files
 │   │       ├── names.csv          # Name pools for random generation
-│   │       ├── outfit_prompts.csv # 1500+ outfit descriptions
 │   │       └── reference_sprites/ # Reference characters for scaling
 │   │
 │   └── vn_writer/                 # Tool 3: VN Writer (Scene Editor)
-│       └── editor.py              # Visual scene editor
+│       └── editor.py              # Visual scene editor (planned)
 │
 ├── renpy-8.5.0-sdk/               # Ren'Py SDK (downloaded automatically)
 ├── requirements.txt               # Python dependencies
@@ -411,49 +445,92 @@ default_outfit: "casual"
 -   Ensure you're using Homebrew Python (not system Python)
 -   The `start-mac.command` script handles this automatically
 
+### Outfit or expression generation blocked
+
+-   Gemini's safety filters may block certain content
+-   The wizard will skip blocked items and continue with others
+-   Try regenerating with "Regen New Outfit" for a different style
+-   Custom prompts are more likely to be blocked than random ones
+-   Underwear uses a tiered fallback system automatically
+
+### Background removal looks wrong
+
+-   Adjust Tolerance slider: higher values remove more aggressively
+-   Adjust Depth slider: higher values clean edges more thoroughly
+-   Switch to Manual mode for precise click-based removal
+-   Use "Touch Up BG" on expression review for fine adjustments
+
+### Help button shows ? but no text
+
+-   Click the ? button in the wizard footer to see step-specific help
+-   Each step has detailed instructions for all controls
+-   Scroll within the help modal to see full content
+
+### Next button is disabled
+
+-   On Character step: Click "Accept Crop" after setting crop line
+-   On Review step: Check the acknowledgment box if warning is shown
+-   On Expression Review: Navigate through all outfits (Prev/Next) before continuing
+-   During generation: Wait for the loading screen to complete
+
 ---
 
 ## Changelog
 
-### v2.1.0 (Current - Preparing for Standalone Release)
+### v2.1.0 (Current Release)
+
+**Complete Wizard Redesign:**
+-   New 9-step guided wizard for character creation
+-   Streamlined workflow: Source → Character → Options → Review → Outfits → Expressions → Eye Line → Scale → Complete
+-   Comprehensive help system with detailed instructions on every step (click the ? button)
+-   Image normalization and modification within the wizard (no separate tools needed)
+-   Integrated crop tool in character setup step
+
+**Safety & Content Handling:**
+-   Age enforcement in image normalization (characters appear 18+)
+-   Warning system for content that may trigger Gemini's safety filters
+-   Acknowledgment checkbox for custom outfits, underwear, and custom expressions
+-   Graceful skipping when content is blocked (wizard continues with successful items)
+-   Removed unreliable "Regen Same Outfit" button for underwear
 
 **Outfit System Overhaul:**
--   Split monolithic `outfit_prompts.csv` into 36 individual files organized by archetype and outfit type (e.g., `young_woman_casual.csv`, `adult_man_formal.csv`)
 -   Added **underwear** as a new outfit option for all character archetypes
--   Better per-archetype customization with dedicated prompt files
+-   Multi-tier fallback system for sensitive content:
+    -   Tier 0-4 progressively safer descriptions when filters block content
+    -   Athletic wear alternatives as final fallback
+-   Random, Custom, and Standard (uniform only) generation modes
+-   Custom outfit support with user-defined names and descriptions
 
-**Multi-Tier Safety Fallback System:**
--   Implemented 5-tier fallback system when Gemini's safety filters block content:
-    -   Tier 1: Original prompt (retry once)
-    -   Tier 2: Alternative random prompt from CSV
-    -   Tier 3: Archetype-specific modest description
-    -   Tier 4: Ultra-generic description (no specific garment names)
-    -   Tier 5: Athletic wear alternative (sports bra/shorts framing)
--   Safety fallbacks for sensitive expressions (embarrassed, flustered)
--   Graceful degradation instead of pipeline failure
+**Background Removal Improvements:**
+-   Tolerance (0-150) and Depth (0-50) sliders for fine-tuned edge cleanup
+-   Per-outfit background mode selection (auto vs manual)
+-   Manual mode: Click-based flood fill with adjustable threshold
+-   Touch Up BG / Remove BG buttons on expression review
+-   Background preview dropdown (Black/White/Game backgrounds)
 
-**Error Handling Improvements:**
--   New custom exception classes: `GeminiAPIError` and `GeminiSafetyError`
--   Better retry logic for transient API errors (429, 5xx status codes)
--   Detailed safety filter logging for debugging
+**Expression Generation:**
+-   Must review all outfits before proceeding (prevents missed issues)
+-   Per-expression regeneration
+-   Expression 0 (neutral) uses outfit directly (not regeneratable)
+-   Custom expression support with auto-assigned numbers
 
-**UI Enhancements:**
--   **Manual background removal tool**: Click-based flood fill with adjustable threshold
--   Enhanced review windows with per-outfit cleanup controls (tolerance/depth sliders)
--   Background preview options (Black/White/Custom) during review
--   Undo history system for manual background removal (up to 25 states)
--   State preservation for slider positions between regeneration iterations
+**Finalization:**
+-   Eye line picker with visual guide (for dialogue positioning)
+-   Name color picker (samples from hair)
+-   Side-by-side scale comparison with reference sprites
+-   Automatic character.yml and expression sheet generation
 
-**Sprite Tester Integration:**
--   Moved sprite tester into `src/sprite_creator/tester/` module
--   Self-contained with all dependencies for standalone release preparation
+**UI/UX Polish:**
+-   Help modal scroll fix (no longer scrolls content behind on outfit/expression steps)
+-   Larger help modal (500x450) for better readability
+-   State preservation for slider positions between regenerations
+-   Loading screens during API operations
+-   Disabled navigation buttons during generation
 
-**Ren'Py Scaffolder:**
--   Added `filtered_image.py` template for advanced image filtering support
-
-**Infrastructure:**
--   Updated `.gitignore` for better project hygiene
--   Updated `requirements.txt` dependencies
+**Code Cleanup:**
+-   Removed dead code (PromptGenerationStep, unused prompt builders)
+-   Centralized WizardState in core/models.py
+-   Cleaner module organization
 
 ### v2.0.0
 

@@ -46,6 +46,15 @@ sprite-creator = "sprite_creator.__main__:main"
 [project.scripts]
 sprite-creator-cli = "sprite_creator.__main__:main"
 
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6.0",
+]
+dev = [
+    "pyinstaller>=6.0",
+    "pytest>=7.0",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -53,5 +62,6 @@ where = ["src"]
 "sprite_creator" = [
     "data/*.csv",
     "data/reference_sprites/**/*",
-    "tester/templates/*",
+    "tools/tester/templates/*",
+    "tools/tester/_test_project/**/*",
 ]

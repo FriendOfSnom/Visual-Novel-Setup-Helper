@@ -44,17 +44,49 @@ class ExpressionReviewStep(WizardStep):
     STEP_TITLE = "Expressions"
     STEP_HELP = """Expression Review
 
-Review the generated expressions for each outfit.
+This step shows all generated expressions for each outfit.
 
-The system generates one neutral expression (0) plus all selected expressions
-for each outfit that was generated.
+IMPORTANT: You must review ALL outfits before proceeding.
 
-Per-Expression Options:
-- Regenerate: Generate a new version of that specific expression
+NAVIGATION
+Use the "< Prev" and "Next >" buttons to switch between outfits.
 
-All outfits share the same expression set for consistency.
+The progress indicator shows:
+- Current outfit number and name
+- How many outfits you've viewed
 
-Accept All when satisfied to continue to finalization."""
+The Next button is disabled until you've viewed every outfit at least once.
+
+EXPRESSION CARDS
+Each card shows one expression with its number and description.
+
+Expression 0 (neutral) cannot be regenerated - it uses the outfit image directly.
+
+REGENERATION
+Click "Regen" on any expression (except 0) to generate a new version. The AI will create a different interpretation of that expression.
+
+BACKGROUND TOUCH-UP
+Each expression has a background button:
+
+"Touch Up BG" (if outfit used auto mode):
+Opens a click-based editor starting from the auto-removed result. Use this to clean up any remaining background artifacts.
+
+"Remove BG" (if outfit used manual mode):
+Opens a click-based editor starting from the original black-background image. Use this for full manual background removal.
+
+In the editor:
+- Click on background areas to remove them (flood fill)
+- Adjust tolerance with the slider
+- Click "Restart" to undo all changes
+- Click "Accept" when done
+
+WORKFLOW
+1. Use Prev/Next to view each outfit's expressions
+2. Regenerate any expressions that don't look right
+3. Touch up backgrounds if needed
+4. Once all outfits are viewed, click Next
+
+Note: Changes are saved automatically. You can go back and forth between outfits without losing work."""
 
     def __init__(self, wizard, state: WizardState):
         super().__init__(wizard, state)
@@ -67,6 +99,8 @@ Accept All when satisfied to continue to finalization."""
         self._current_outfit_idx: int = 0
         self._viewed_outfits: set = set()  # Track which outfits have been viewed
         self._progress_label: Optional[tk.Label] = None
+        # Store cleanup data for manual BG removal: {"outfit_name": {"0": (orig_bytes, rembg_bytes), ...}}
+        self._expression_cleanup_data: Dict[str, Dict[str, Tuple[bytes, bytes]]] = {}
 
     def build_ui(self, parent: tk.Frame) -> None:
         parent.configure(bg=BG_COLOR)
@@ -262,7 +296,16 @@ Accept All when satisfied to continue to finalization."""
             pass
 
     def _get_outfit_names(self) -> List[str]:
-        """Get list of outfit names."""
+        """Get list of outfit names that were actually generated.
+
+        Uses generated_outfit_keys which tracks outfits that succeeded,
+        handling cases where outfits like underwear may be skipped due to safety filters.
+        """
+        # Use generated_outfit_keys if available (includes only outfits that succeeded)
+        if self.state.generated_outfit_keys:
+            return self.state.generated_outfit_keys.copy()
+
+        # Fallback for backwards compatibility (shouldn't happen in normal flow)
         names = []
         if self.state.use_base_as_outfit:
             names.append("base")
@@ -301,8 +344,8 @@ Accept All when satisfied to continue to finalization."""
 
         def generate():
             try:
-                expr_paths = self._do_expression_generation(outfit_name)
-                self.wizard.root.after(0, lambda n=outfit_name, p=expr_paths: self._on_outfit_expressions_complete(n, p))
+                expr_paths, cleanup_dict = self._do_expression_generation(outfit_name)
+                self.wizard.root.after(0, lambda n=outfit_name, p=expr_paths, c=cleanup_dict: self._on_outfit_expressions_complete(n, p, c))
             except Exception as e:
                 error_msg = str(e)
                 self.wizard.root.after(0, lambda msg=error_msg: self._on_generation_error(msg))
@@ -310,7 +353,7 @@ Accept All when satisfied to continue to finalization."""
         thread = threading.Thread(target=generate, daemon=True)
         thread.start()
 
-    def _do_expression_generation(self, outfit_name: str) -> Dict[str, Path]:
+    def _do_expression_generation(self, outfit_name: str) -> Tuple[Dict[str, Path], Dict[str, Tuple[bytes, bytes]]]:
         """Generate expressions for one outfit."""
         from ...processing import generate_expressions_for_single_outfit_once
 
@@ -337,8 +380,8 @@ Accept All when satisfied to continue to finalization."""
         # Get bg removal mode from outfit review
         bg_removal_mode = self.state.outfit_bg_modes.get(idx, "rembg")
 
-        # Generate expressions - returns list of paths
-        expr_path_list = generate_expressions_for_single_outfit_once(
+        # Generate expressions - returns (path_list, cleanup_data_list) when for_interactive_review=True
+        expr_path_list, cleanup_data_list = generate_expressions_for_single_outfit_once(
             api_key=self.state.api_key,
             pose_dir=pose_dir,
             outfit_path=outfit_path,
@@ -346,25 +389,40 @@ Accept All when satisfied to continue to finalization."""
             expressions_sequence=self.state.expressions_sequence,
             edge_cleanup_tolerance=edge_cleanup_tolerance,
             edge_cleanup_passes=edge_cleanup_passes,
-            for_interactive_review=False,  # We handle review in the wizard
+            for_interactive_review=True,  # Need cleanup_data for manual BG removal
             bg_removal_mode=bg_removal_mode,
         )
 
-        # Convert list to dict keyed by expression index
+        # Convert lists to dicts keyed by expression index
         expr_paths: Dict[str, Path] = {}
+        cleanup_dict: Dict[str, Tuple[bytes, bytes]] = {}
         for i, path in enumerate(expr_path_list):
-            # Expression key is the index (0 = neutral, 1+ = selected expressions)
             expr_key = str(i)
             expr_paths[expr_key] = path
+            if i < len(cleanup_data_list):
+                cleanup_dict[expr_key] = cleanup_data_list[i]
 
-        return expr_paths
+        # Fix expression 0's cleanup data - use outfit's original black-bg bytes instead of transparent
+        # Expression 0 is just the outfit file, which at this point has transparent BG from rembg.
+        # For manual BG removal to work, we need the original black-bg bytes from the outfit step.
+        if "0" in cleanup_dict and self.state.outfit_cleanup_data and idx < len(self.state.outfit_cleanup_data):
+            original_outfit_bytes, _ = self.state.outfit_cleanup_data[idx]
+            if original_outfit_bytes and len(original_outfit_bytes) > 100:
+                # Keep the rembg result as the second element (what's currently displayed)
+                _, current_rembg = cleanup_dict["0"]
+                cleanup_dict["0"] = (original_outfit_bytes, current_rembg)
 
-    def _on_outfit_expressions_complete(self, outfit_name: str, expr_paths: Dict[str, Path]) -> None:
+        return expr_paths, cleanup_dict
+
+    def _on_outfit_expressions_complete(self, outfit_name: str, expr_paths: Dict[str, Path], cleanup_dict: Dict[str, Tuple[bytes, bytes]]) -> None:
         """Handle completion of one outfit's expressions."""
         # Store in state
         if not self.state.expression_paths:
             self.state.expression_paths = {}
         self.state.expression_paths[outfit_name] = expr_paths
+
+        # Store cleanup data for manual BG removal
+        self._expression_cleanup_data[outfit_name] = cleanup_dict
 
         # Move to next outfit
         self._current_outfit_idx += 1
@@ -413,8 +471,9 @@ Accept All when satisfied to continue to finalization."""
         card = tk.Frame(self._inner_frame, bg=CARD_BG, padx=6, pady=4)
 
         # Load image with height constraint (like outfit step)
+        # Read bytes directly to avoid any file caching issues
         try:
-            img = Image.open(path).convert("RGBA")
+            img = Image.open(BytesIO(path.read_bytes())).convert("RGBA")
             # Scale to fit max height while maintaining aspect ratio
             if img.height > max_h:
                 ratio = max_h / img.height
@@ -554,24 +613,59 @@ Accept All when satisfied to continue to finalization."""
         if self._is_generating:
             return
 
-        if not path.exists():
-            messagebox.showerror("Error", f"Expression file not found: {path}")
+        # Get original black-bg bytes from stored cleanup data
+        if outfit_name not in self._expression_cleanup_data:
+            messagebox.showerror("Error", "No original image data available for this outfit.")
             return
 
-        # Verify file has content
-        if path.stat().st_size < 100:  # Minimum size for a valid PNG
-            messagebox.showerror("Error", f"Expression file appears to be empty or corrupted: {path}")
+        cleanup_data = self._expression_cleanup_data[outfit_name].get(expr_key)
+        if not cleanup_data:
+            messagebox.showerror("Error", f"No cleanup data for expression {expr_key}.")
             return
 
-        # Open manual removal (blocking call)
+        original_bytes, rembg_bytes = cleanup_data
+
+        # Determine which bytes to use based on outfit's BG mode
+        # "Touch Up" mode (rembg): Start from rembg result, so Restart goes back to rembg output
+        # "Remove BG" mode (manual): Start from original black-bg, so Restart goes back to original
+        outfit_names = self._get_outfit_names()
+        outfit_idx = outfit_names.index(outfit_name) if outfit_name in outfit_names else 0
+        bg_mode = self.state.outfit_bg_modes.get(outfit_idx, "rembg")
+
+        if bg_mode == "rembg":
+            # Touch Up mode: use rembg result as starting point
+            working_bytes = rembg_bytes
+        else:
+            # Manual mode: use original black-bg as starting point
+            working_bytes = original_bytes
+
+        # Verify bytes are valid
+        if not working_bytes or len(working_bytes) < 100:
+            messagebox.showerror("Error", "Image data is missing or invalid.")
+            return
+
+        # Write to temp file for manual editing
+        temp_path = path.parent / f"_temp_manual_{expr_key}.png"
+        temp_path.write_bytes(working_bytes)
+
         from ..review_windows import click_to_remove_background
-
-        accepted = click_to_remove_background(path, threshold=30)
+        accepted = click_to_remove_background(temp_path, threshold=30)
 
         if accepted:
-            # Refresh display to show changes
+            # Copy result back to expression path
+            edited_bytes = temp_path.read_bytes()
+            path.write_bytes(edited_bytes)
+            # Update cleanup data with edited result (keep original for future Restart, update displayed)
+            self._expression_cleanup_data[outfit_name][expr_key] = (original_bytes, edited_bytes)
+            # Force refresh the display
+            self._inner_frame.update_idletasks()
             self._show_outfit_expressions()
+            self._canvas.update_idletasks()
             self._status_label.configure(text=f"Manual BG removal applied to expression {expr_key}.")
+
+        # Clean up temp file
+        if temp_path.exists():
+            temp_path.unlink()
 
     def _on_regenerate_all(self) -> None:
         """Regenerate all expressions."""

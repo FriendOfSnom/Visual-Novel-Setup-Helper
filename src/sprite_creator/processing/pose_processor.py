@@ -1,8 +1,7 @@
 """
 Pose processing and outfit generation.
 
-Handles initial pose normalization, outfit generation, pose flattening,
-and character.yml writing.
+Handles outfit generation, pose flattening, and character.yml writing.
 """
 
 import random
@@ -25,14 +24,14 @@ from ..api.gemini_client import (
     REMBG_EDGE_CLEANUP_PASSES,
 )
 from ..api.prompt_builders import (
-    build_initial_pose_prompt,
     build_outfit_prompt,
     build_standard_school_uniform_prompt,
 )
 from ..config import (
-    SAFETY_FALLBACK_UNDERWEAR_PROMPTS,
-    SAFETY_FALLBACK_UNDERWEAR_TIER4,
-    SAFETY_FALLBACK_ATHLETIC_UNDERWEAR,
+    FEMALE_ARCHETYPES,
+    UNDERWEAR_COLORS,
+    UNDERWEAR_TIER0_PROMPTS,
+    UNDERWEAR_FALLBACK_TIERS,
 )
 from .image_utils import (
     save_image_bytes_as_png,
@@ -85,62 +84,25 @@ def write_character_yml(
     print(f"[INFO] Wrote character YAML to: {path}")
 
 
-def generate_initial_pose_once(
-    api_key: str,
-    image_path: Path,
-    out_stem: Path,
-    gender_style: str,
-    archetype_label: str = "",
-    additional_instructions: str = "",
-) -> Path:
-    """
-    Normalize the original sprite into pose A.
-
-    Returns the raw Gemini output (no background removal). This serves as the
-    template for all outfits - background removal happens per-outfit later.
-
-    Args:
-        api_key: Gemini API key.
-        image_path: Source image path.
-        out_stem: Output path stem (without extension).
-        gender_style: 'f' or 'm'.
-        archetype_label: Character archetype (e.g., "young woman", "adult man").
-        additional_instructions: Optional extra instructions to append to the prompt.
-
-    Returns:
-        Path to saved normalized pose image (with solid background from Gemini).
-    """
-    print("  [Gemini] Normalizing base pose...")
-    image_b64 = load_image_as_base64(image_path)
-    # Use black background - this will be the template for outfit generation
-    prompt = build_initial_pose_prompt(
-        gender_style, archetype_label, "solid black (#000000)", additional_instructions
-    )
-
-    # Get raw Gemini output - NO background removal (that happens per-outfit)
-    img_bytes = call_gemini_image_edit(api_key, prompt, image_b64, skip_background_removal=True)
-    final_path = save_image_bytes_as_png(img_bytes, out_stem)
-    print(f"  Saved base pose to: {final_path}")
-    return final_path
-
-
 def _generate_outfit_with_safety_recovery(
     api_key: str,
     base_pose_path: Path,
     gender_style: str,
     outfit_key: str,
     outfit_desc: str,
-    outfit_database: Dict[str, Dict[str, List[str]]],
     archetype_label: str,
     outfit_prompt_config: Dict[str, Dict[str, Optional[str]]],
     skip_background_removal: bool = False,
-) -> bytes:
+) -> Optional[Tuple[bytes, str]]:
     """
-    Generate outfit with 3-tier safety error recovery.
+    Generate outfit with multi-tier safety error recovery.
 
-    Tier 1: Retry same prompt once
-    Tier 2: Pick new random CSV prompt (if available)
-    Tier 3: Use archetype-specific modest fallback
+    For underwear (random mode): Uses dedicated tier system from the start.
+      - Tier 0: 2 random attempts (color + prompt for females, just prompt for males)
+      - Tier 1-N: Ordered fallback from UNDERWEAR_FALLBACK_TIERS
+      - Skip gracefully if all tiers fail
+
+    For non-underwear or custom underwear: Simple retry logic.
 
     AI background removal is automatically applied unless skip_background_removal=True.
 
@@ -150,16 +112,12 @@ def _generate_outfit_with_safety_recovery(
         gender_style: 'f' or 'm'.
         outfit_key: Outfit identifier.
         outfit_desc: Initial outfit description/prompt.
-        outfit_database: All loaded CSV prompts.
         archetype_label: Character archetype.
         outfit_prompt_config: Per-outfit configuration.
         skip_background_removal: If True, return raw Gemini output without rembg.
 
     Returns:
-        Generated outfit image bytes (with or without transparent background).
-
-    Raises:
-        GeminiAPIError: If all recovery tiers fail.
+        Tuple of (image_bytes, successful_prompt) if successful, None if all tiers fail.
     """
     image_b64 = load_image_as_base64(base_pose_path)
     tried_prompts = set()
@@ -181,80 +139,68 @@ def _generate_outfit_with_safety_recovery(
             print(f"[WARN] {tier_name}: API error during '{outfit_key}' generation: {e}")
             return None
 
-    # Tier 1: Try original prompt
+    config = outfit_prompt_config.get(outfit_key, {})
+    use_random = config.get("use_random", True)
+
+    # =========================================================================
+    # UNDERWEAR: Special tier system (only when using random mode)
+    # =========================================================================
+    if outfit_key == "underwear" and use_random:
+        is_female = archetype_label in FEMALE_ARCHETYPES
+        tier0_prompts = UNDERWEAR_TIER0_PROMPTS.get(archetype_label, [])
+        fallback_tiers = UNDERWEAR_FALLBACK_TIERS.get(archetype_label, ["Pink undergarments"])
+
+        # Tier 0: 2 random attempts with variety
+        for attempt in range(2):
+            if tier0_prompts:
+                base_prompt = random.choice(tier0_prompts)
+            else:
+                base_prompt = fallback_tiers[0] if fallback_tiers else "Pink undergarments"
+
+            if is_female:
+                color = random.choice(UNDERWEAR_COLORS)
+                prompt_to_try = f"{color} {base_prompt.lower()}"
+            else:
+                prompt_to_try = base_prompt
+
+            print(f"  [Underwear] Tier 0 attempt {attempt + 1}: \"{prompt_to_try}\"")
+            img_bytes = try_generate(prompt_to_try, f"Tier 0.{attempt + 1}")
+            if img_bytes:
+                return (img_bytes, prompt_to_try)
+
+        # Tier 1-N: Ordered fallback through tiers
+        for tier_idx, tier_prompt in enumerate(fallback_tiers):
+            if tier_prompt in tried_prompts:
+                continue
+
+            print(f"  [Underwear] Tier {tier_idx + 1}: \"{tier_prompt}\"")
+            img_bytes = try_generate(tier_prompt, f"Tier {tier_idx + 1}")
+            if img_bytes:
+                return (img_bytes, tier_prompt)
+
+        # All underwear tiers exhausted
+        print(
+            f"[WARN] All underwear tiers exhausted for '{archetype_label}'. "
+            "Skipping underwear outfit."
+        )
+        return None
+
+    # =========================================================================
+    # NON-UNDERWEAR (or custom underwear): Standard generation with simple retry
+    # =========================================================================
     print(f"  [Safety] Attempting '{outfit_key}' generation...")
     img_bytes = try_generate(outfit_desc, "Tier 1")
     if img_bytes:
-        return img_bytes
+        return (img_bytes, outfit_desc)
 
-    # Tier 1 Retry
+    # Retry once
     print(f"[INFO] Tier 1 Recovery: Retrying same prompt once...")
     img_bytes = try_generate(outfit_desc, "Tier 1 Retry")
     if img_bytes:
         print(f"[INFO] Tier 1 Recovery: Retry succeeded")
-        return img_bytes
+        return (img_bytes, outfit_desc)
 
-    print(f"[WARN] Tier 1 Recovery: Retry failed")
-
-    # Tier 2: New random CSV prompt (underwear only, random mode only)
-    if outfit_key == "underwear":
-        config = outfit_prompt_config.get(outfit_key, {})
-        if config.get("use_random", True):
-            archetype_prompts = outfit_database.get(archetype_label, {})
-            available_prompts = archetype_prompts.get(outfit_key, [])
-            untried = [p for p in available_prompts if p not in tried_prompts]
-
-            if untried:
-                new_desc = random.choice(untried)
-                print(f"[INFO] Tier 2 Recovery: Selecting new random prompt from CSV...")
-                print(f"[INFO] New prompt: \"{new_desc[:100]}{'...' if len(new_desc) > 100 else ''}\"")
-
-                img_bytes = try_generate(new_desc, "Tier 2")
-                if img_bytes:
-                    print(f"[INFO] Tier 2 Recovery: New prompt succeeded")
-                    return img_bytes
-
-                print(f"[WARN] Tier 2 Recovery: New prompt also blocked")
-            else:
-                print(f"[INFO] Tier 2 Recovery: No untried CSV prompts available")
-        else:
-            print(f"[INFO] Tier 2 Recovery: Skipped (not using random prompts)")
-    else:
-        print(f"[INFO] Tier 2 Recovery: Skipped (not underwear outfit)")
-
-    # Tier 3: Archetype-specific modest fallback
-    fallback = SAFETY_FALLBACK_UNDERWEAR_PROMPTS.get(archetype_label)
-
-    if fallback and fallback not in tried_prompts:
-        print(f"[INFO] Tier 3 Recovery: Using archetype-specific modest fallback")
-        print(f"[INFO] Fallback prompt: \"{fallback[:100]}{'...' if len(fallback) > 100 else ''}\"")
-
-        img_bytes = try_generate(fallback, "Tier 3")
-        if img_bytes:
-            print(f"[INFO] Tier 3 Recovery: Fallback succeeded")
-            return img_bytes
-
-    # Tier 4: Ultra-generic prompt (no specific garment names)
-    tier4_fallback = SAFETY_FALLBACK_UNDERWEAR_TIER4.get(archetype_label)
-    if tier4_fallback and tier4_fallback not in tried_prompts:
-        print(f"[INFO] Tier 4 Recovery: Using ultra-generic prompt")
-        print(f"[INFO] Ultra-generic prompt: \"{tier4_fallback}\"")
-
-        img_bytes = try_generate(tier4_fallback, "Tier 4")
-        if img_bytes:
-            print(f"[INFO] Tier 4 Recovery: Ultra-generic prompt succeeded")
-            return img_bytes
-
-    # Tier 5: Athletic underwear alternative (sports bra + running shorts)
-    athletic_alt = SAFETY_FALLBACK_ATHLETIC_UNDERWEAR.get(archetype_label)
-    if athletic_alt and athletic_alt not in tried_prompts:
-        print(f"[INFO] Tier 5 Recovery: Trying athletic underwear alternative")
-        print(f"[INFO] Athletic prompt: \"{athletic_alt}\"")
-
-        img_bytes = try_generate(athletic_alt, "Tier 5")
-        if img_bytes:
-            print(f"[INFO] Tier 5 Recovery: Athletic alternative succeeded")
-            return img_bytes
+    print(f"[WARN] Tier 1 Recovery: Retry failed for '{outfit_key}'")
 
     # All tiers exhausted - return None to skip gracefully
     print(
@@ -273,9 +219,8 @@ def generate_single_outfit(
     outfit_desc: str,
     outfit_prompt_config: Dict[str, Dict[str, Optional[str]]],
     archetype_label: str,
-    outfit_database: Dict[str, Dict[str, List[str]]],
     for_interactive_review: bool = False,
-) -> Optional[Path] | Optional[Tuple[Path, bytes, bytes]]:
+) -> Optional[Path] | Optional[Tuple[Path, bytes, bytes, str]]:
     """
     Generate or regenerate a single outfit image for the given key.
 
@@ -292,13 +237,12 @@ def generate_single_outfit(
         outfit_desc: Outfit description/prompt.
         outfit_prompt_config: Per-outfit configuration.
         archetype_label: Character archetype.
-        outfit_database: All loaded CSV prompts for safety recovery.
-        for_interactive_review: If True, return (path, original_bytes, rembg_bytes)
+        for_interactive_review: If True, return (path, original_bytes, rembg_bytes, used_prompt)
             so the review UI can apply custom edge cleanup settings.
 
     Returns:
         If for_interactive_review=False: Path to saved outfit, or None if failed.
-        If for_interactive_review=True: (path, original_bytes, rembg_bytes), or None if failed.
+        If for_interactive_review=True: (path, original_bytes, rembg_bytes, used_prompt), or None if failed.
     """
     outfits_dir.mkdir(parents=True, exist_ok=True)
 
@@ -320,7 +264,8 @@ def generate_single_outfit(
         if for_interactive_review:
             final_path, original_bytes, rembg_bytes = result
             print(f"  Saved standardized outfit '{outfit_key}' to: {final_path}")
-            return (final_path, original_bytes, rembg_bytes)
+            # Standard uniform uses the outfit_desc as the prompt
+            return (final_path, original_bytes, rembg_bytes, outfit_desc)
         else:
             print(f"  Saved standardized outfit '{outfit_key}' to: {result}")
             return result
@@ -331,21 +276,22 @@ def generate_single_outfit(
     try:
         if for_interactive_review:
             # Get raw Gemini output (no rembg yet)
-            original_bytes = _generate_outfit_with_safety_recovery(
+            result = _generate_outfit_with_safety_recovery(
                 api_key,
                 base_pose_path,
                 gender_style,
                 outfit_key,
                 outfit_desc,
-                outfit_database,
                 archetype_label,
                 outfit_prompt_config,
                 skip_background_removal=True,
             )
 
-            if original_bytes is None:
+            if result is None:
                 print(f"[WARN] Skipping outfit '{outfit_key}' - could not generate safely")
                 return None
+
+            original_bytes, used_prompt = result
 
             # Run rembg without edge cleanup (user will apply cleanup in review UI)
             rembg_bytes = strip_background_ai(original_bytes, skip_edge_cleanup=True)
@@ -353,23 +299,24 @@ def generate_single_outfit(
             # Save rembg result initially (may be updated after review)
             final_path = save_image_bytes_as_png(rembg_bytes, out_stem)
             print(f"  Saved outfit '{outfit_key}' to: {final_path}")
-            return (final_path, original_bytes, rembg_bytes)
+            return (final_path, original_bytes, rembg_bytes, used_prompt)
         else:
             # Normal flow: full background removal with default edge cleanup
-            img_bytes = _generate_outfit_with_safety_recovery(
+            result = _generate_outfit_with_safety_recovery(
                 api_key,
                 base_pose_path,
                 gender_style,
                 outfit_key,
                 outfit_desc,
-                outfit_database,
                 archetype_label,
                 outfit_prompt_config,
             )
 
-            if img_bytes is None:
+            if result is None:
                 print(f"[WARN] Skipping outfit '{outfit_key}' - could not generate safely")
                 return None
+
+            img_bytes, _ = result  # Don't need the prompt for non-interactive
 
             final_path = save_image_bytes_as_png(img_bytes, out_stem)
             print(f"  Saved outfit '{outfit_key}' to: {final_path}")
@@ -436,25 +383,26 @@ def generate_standard_uniform_outfit(
             print(f"  Saved fallback prompt-based uniform to: {final_path}")
             return final_path
 
-    # Use first uniform reference
+    # Log which uniform reference exists (for debugging)
     uniform_ref = uniform_refs[0]
-    print(f"[INFO] Using uniform reference: {uniform_ref}")
+    print(f"[INFO] Found uniform reference: {uniform_ref} (using detailed text prompt instead)")
 
-    # Build unified, standardized uniform prompt
+    # Build unified, standardized uniform prompt with detailed description
     uniform_prompt = build_standard_school_uniform_prompt(
         archetype_label,
         gender_style,
         background_color,
     )
 
-    # Call Gemini with prompt and two reference images:
-    #   1) the base pose (the character to keep)
-    #   2) the cropped uniform example (clothes to copy)
+    # Use call_gemini_image_edit (like casual/athletic outfits) to properly edit
+    # the base pose. The detailed text description guides the uniform generation.
+    image_b64 = load_image_as_base64(base_pose_path)
+
     if for_interactive_review:
-        original_bytes = call_gemini_text_or_refs(
+        original_bytes = call_gemini_image_edit(
             api_key,
             uniform_prompt,
-            ref_images=[base_pose_path, uniform_ref],
+            image_b64,
             skip_background_removal=True,
         )
         rembg_bytes = strip_background_ai(original_bytes, skip_edge_cleanup=True)
@@ -463,10 +411,10 @@ def generate_standard_uniform_outfit(
         print(f"  Saved standardized school uniform to: {final_path}")
         return (final_path, original_bytes, rembg_bytes)
     else:
-        img_bytes = call_gemini_text_or_refs(
+        img_bytes = call_gemini_image_edit(
             api_key,
             uniform_prompt,
-            ref_images=[base_pose_path, uniform_ref],
+            image_b64,
         )
         out_stem = outfits_dir / "Uniform"
         final_path = save_image_bytes_as_png(img_bytes, out_stem)
@@ -482,10 +430,9 @@ def generate_outfits_once(
     outfit_descriptions: Dict[str, str],
     outfit_prompt_config: Dict[str, Dict[str, Optional[str]]],
     archetype_label: str,
-    outfit_database: Dict[str, Dict[str, List[str]]],
     include_base_outfit: bool = True,
     for_interactive_review: bool = False,
-) -> List[Path] | Tuple[List[Path], List[Tuple[bytes, bytes]]]:
+) -> List[Path] | Tuple[List[Path], List[Tuple[bytes, bytes]], Dict[str, str]]:
     """
     Generate outfits for a pose.
 
@@ -503,18 +450,19 @@ def generate_outfits_once(
         outfit_descriptions: Dict of outfit keys to descriptions.
         outfit_prompt_config: Per-outfit configuration.
         archetype_label: Character archetype.
-        outfit_database: All loaded CSV prompts for safety recovery.
         include_base_outfit: Whether to include base pose as an outfit.
         for_interactive_review: If True, return cleanup data for review UI.
 
     Returns:
         If for_interactive_review=False: List of paths to generated outfit images.
-        If for_interactive_review=True: (paths, cleanup_data) where cleanup_data is
-            list of (original_bytes, rembg_bytes) tuples for each outfit.
+        If for_interactive_review=True: (paths, cleanup_data, used_prompts) where cleanup_data is
+            list of (original_bytes, rembg_bytes) tuples for each outfit, and used_prompts is
+            a dict mapping outfit keys to the actual prompts that succeeded.
     """
     outfits_dir.mkdir(parents=True, exist_ok=True)
     paths: List[Path] = []
     cleanup_data: List[Tuple[bytes, bytes]] = []
+    used_prompts: Dict[str, str] = {}
 
     # Optional: include base pose as "Base.png" outfit (with background removal)
     if include_base_outfit:
@@ -529,6 +477,7 @@ def generate_outfits_once(
             base_img.save(base_out_path, format="PNG", compress_level=0, optimize=False)
             paths.append(base_out_path)
             cleanup_data.append((base_bytes, rembg_bytes))
+            # Base outfit has no prompt
         else:
             # Normal flow: full background removal with default edge cleanup
             processed_bytes = strip_background_ai(base_bytes)
@@ -547,7 +496,6 @@ def generate_outfits_once(
             desc,
             outfit_prompt_config,
             archetype_label,
-            outfit_database,
             for_interactive_review=for_interactive_review,
         )
 
@@ -555,14 +503,15 @@ def generate_outfits_once(
             continue
 
         if for_interactive_review:
-            final_path, original_bytes, rembg_bytes = result
+            final_path, original_bytes, rembg_bytes, prompt_used = result
             paths.append(final_path)
             cleanup_data.append((original_bytes, rembg_bytes))
+            used_prompts[key] = prompt_used
         else:
             paths.append(result)
 
     if for_interactive_review:
-        return (paths, cleanup_data)
+        return (paths, cleanup_data, used_prompts)
     return paths
 
 

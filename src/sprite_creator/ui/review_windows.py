@@ -759,7 +759,15 @@ def click_to_remove_background(image_path: Path, threshold: int = 30) -> bool:
     history_stack: List[Image.Image] = []  # Stack of previous image states
     MAX_HISTORY_SIZE = 25  # Memory limit: ~25MB for typical sprites
 
-    root = tk.Tk()
+    # Use Toplevel instead of Tk to avoid multiple Tk instance issues with PhotoImage
+    # Get the existing Tk root if available, otherwise create one
+    existing_root = tk._default_root
+    if existing_root is None:
+        root = tk.Tk()
+    else:
+        root = tk.Toplevel(existing_root)
+        root.transient(existing_root)  # Keep on top of parent
+        root.grab_set()  # Make modal
     root.configure(bg=BG_COLOR)
     root.title("Click to Remove Background")
 
@@ -836,7 +844,8 @@ def click_to_remove_background(image_path: Path, threshold: int = 30) -> bool:
     def update_display():
         """Update canvas with current working image."""
         display_img = working_img.resize((display_w, display_h), Image.LANCZOS)
-        img_refs["current_tk"] = ImageTk.PhotoImage(display_img)
+        # Explicitly set master to ensure PhotoImage is created in the correct Tk context
+        img_refs["current_tk"] = ImageTk.PhotoImage(display_img, master=root)
         canvas.delete("image")
         canvas.create_image(0, 0, anchor="nw", image=img_refs["current_tk"], tags="image")
 

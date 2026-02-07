@@ -218,23 +218,30 @@ class FullWizard:
         footer = tk.Frame(self._main_frame, bg=BG_COLOR, padx=30, pady=12)
         footer.pack(fill="x", side="bottom")
 
-        # Left side: Help and Cancel buttons with proper spacing
+        # Use grid layout for left-center-right positioning
+        footer.columnconfigure(0, weight=1)  # Left section
+        footer.columnconfigure(1, weight=1)  # Center section
+        footer.columnconfigure(2, weight=1)  # Right section
+
+        # Left side: Cancel button only
         left_frame = tk.Frame(footer, bg=BG_COLOR)
-        left_frame.pack(side="left")
+        left_frame.grid(row=0, column=0, sticky="w")
 
-        # Help button (far left)
-        self._help_btn = create_help_button(left_frame, "Help", "")
-        self._help_btn.pack(side="left")
-
-        # Cancel button (after help with spacing)
         self._cancel_btn = create_secondary_button(
             left_frame, "Cancel", self._on_cancel, width=10
         )
-        self._cancel_btn.pack(side="left", padx=(20, 0))
+        self._cancel_btn.pack(side="left")
 
-        # Navigation buttons (right side) - Next rightmost, Back to its left
+        # Center: Help button
+        center_frame = tk.Frame(footer, bg=BG_COLOR)
+        center_frame.grid(row=0, column=1)
+
+        self._help_btn = create_help_button(center_frame, "?", "")
+        self._help_btn.pack()
+
+        # Right side: Navigation buttons - Next rightmost, Back to its left
         nav_frame = tk.Frame(footer, bg=BG_COLOR)
-        nav_frame.pack(side="right")
+        nav_frame.grid(row=0, column=2, sticky="e")
 
         # Pack Next first with side="right" so it appears rightmost
         self._next_btn = create_primary_button(
@@ -472,7 +479,7 @@ def run_full_wizard(
     from .screens.setup_steps import (
         SourceStep, CharacterStep, OptionsStep
     )
-    from .screens.generation_steps import BaseGenerationStep
+    from .screens.generation_steps import ReviewStep
     from .screens.outfit_steps import OutfitReviewStep
     from .screens.expression_steps import ExpressionReviewStep
     from .screens.finalization_steps import EyeLineStep, ScaleStep, SummaryStep
@@ -485,7 +492,7 @@ def run_full_wizard(
     wizard.register_step(OptionsStep)
 
     # Register generation step (unified for both image and prompt modes)
-    wizard.register_step(BaseGenerationStep)
+    wizard.register_step(ReviewStep)
 
     # Register outfit review (8)
     wizard.register_step(OutfitReviewStep)
@@ -506,7 +513,7 @@ if __name__ == "__main__":
     from .screens.setup_steps import (
         SourceStep, CharacterStep, OptionsStep
     )
-    from .screens.generation_steps import BaseGenerationStep
+    from .screens.generation_steps import ReviewStep
     from .screens.outfit_steps import OutfitReviewStep
     from .screens.expression_steps import ExpressionReviewStep
     from .screens.finalization_steps import EyeLineStep, ScaleStep, SummaryStep
@@ -520,7 +527,7 @@ if __name__ == "__main__":
     wizard.register_step(OptionsStep)
 
     # Generation step (unified for both modes)
-    wizard.register_step(BaseGenerationStep)
+    wizard.register_step(ReviewStep)
 
     # Outfit review (8)
     wizard.register_step(OutfitReviewStep)

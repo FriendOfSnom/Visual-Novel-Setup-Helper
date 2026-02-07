@@ -65,23 +65,44 @@ class EyeLineStep(WizardStep):
 
     STEP_ID = "eye_line"
     STEP_TITLE = "Finalize"
-    STEP_HELP = """Finalize Character: Eye Line & Name Color
+    STEP_HELP = """Eye Line & Name Color
 
-This step configures two important character attributes:
+This step sets two values used by visual novel engines.
 
-Step 1: Eye Line
-- Click on the character's eyes to set the eye line position
-- This affects how the character's head is positioned in dialogues
-- The eye line is used to align characters in conversations
+STEP 1: EYE LINE
+A red horizontal line follows your mouse. Click on the character's eyes to record the position.
 
-Step 2: Name Color
-- Click on the character's hair to pick the name display color
-- This color will be used when the character's name appears in dialogue
-- Clicking on a transparent area will use a default brown color
+What it's for:
+The eye line ratio tells the engine where the character's eyes are. This is used to:
+- Align multiple characters in conversation
+- Position the character's head at a consistent height
+- Adjust vertical positioning in dialogue scenes
+
+How to set it:
+Move your mouse until the red line is at eye level, then click. The line should pass through the center of both eyes.
+
+After clicking, the step automatically advances to color picking.
+
+STEP 2: NAME COLOR
+A crosshair follows your mouse. Click on the character's hair to sample a color.
+
+What it's for:
+This color is used when the character's name appears in dialogue boxes. Picking a hair color creates visual consistency.
+
+How to set it:
+Click on the most prominent hair color. The sampled color appears in a preview box below.
 
 Tips:
-- For eye line, click at the center of the character's eyes
-- For name color, pick the most prominent hair color"""
+- Avoid clicking on highlights or shadows
+- If you click a transparent area, a default brown is used
+- You can click again to change the color
+
+AFTER BOTH ARE SET
+The status shows both values. Click Next to continue.
+
+If you need to redo:
+- You can click again to change the name color
+- To redo the eye line, you'll need to go Back and return"""
 
     def __init__(self, wizard, state: WizardState):
         super().__init__(wizard, state)
@@ -355,19 +376,43 @@ class ScaleStep(WizardStep):
 
     STEP_ID = "scale"
     STEP_TITLE = "Scale"
-    STEP_HELP = """Character Scale Selection
+    STEP_HELP = """Character Scale
 
-Compare your character with reference sprites to set the correct in-game scale.
+This step sets how large your character appears in-game.
 
-How to use:
-1. Select a reference character from the dropdown
-2. Adjust the scale slider until your character matches the reference height
-3. The eye line (if set) is shown to help with alignment
+HOW IT WORKS
+The left canvas shows a reference character at their defined scale.
+The right canvas shows your character at the current slider value.
 
-Tips:
-- Use a reference character of similar age/archetype
-- Match heights at the shoulders or top of head
-- A scale of 1.0 means the character displays at its original size"""
+Both are rendered as they would appear in the game engine, anchored at the bottom (standing on the same ground).
+
+REFERENCE DROPDOWN
+Select a reference character to compare against. Choose one that matches your character's age/archetype for best results.
+
+Reference characters have pre-defined scales in their .yml files.
+
+SCALE SLIDER
+Drag to adjust your character's scale:
+- 1.0 = Original image size (no scaling)
+- Below 1.0 = Character appears smaller
+- Above 1.0 = Character appears larger
+
+The red line on your character shows the eye line position (if set in the previous step). Use this to help match eye levels between characters.
+
+RECOMMENDED APPROACH
+1. Pick a reference character of similar type
+2. Match the top of your character's head to the reference
+3. Or match shoulder heights for more consistent framing
+4. Fine-tune with the slider (0.01 increments)
+
+COMMON VALUES
+- 0.8 - 1.0: Typical for most characters
+- 0.6 - 0.8: Shorter/younger characters
+- 1.0 - 1.2: Taller characters
+
+The exact value depends on your game's art style and existing characters.
+
+Click Next when the scale looks right."""
 
     def __init__(self, wizard, state: WizardState):
         super().__init__(wizard, state)
@@ -664,19 +709,45 @@ class SummaryStep(WizardStep):
 
     STEP_ID = "summary"
     STEP_TITLE = "Complete"
-    STEP_HELP = """Character Creation Complete
+    STEP_HELP = """Character Complete!
 
-Your character has been successfully created!
+Your character has been created and all files are saved.
 
-The character folder contains:
-- Base pose and outfit images
-- Expression variations for each outfit
-- Character configuration file (character.yml)
+FILES CREATED
+Your character folder contains:
 
-You can now:
-- Use the character in your visual novel
-- Generate expression sheets from the launcher
-- Preview with the Sprite Tester tool"""
+character.yml
+Configuration file with name, voice, scale, eye line, and pose mappings. Used by visual novel engines to display the character correctly.
+
+Pose Folders (a/, b/, etc.)
+Each outfit becomes a "pose" folder containing:
+- The outfit image
+- A faces/ subfolder with all expressions
+
+Expression Sheets
+Automatically generated sprite sheets combining all expressions for each pose. These are optimized for game engines.
+
+WHAT TO DO NEXT
+
+Open Sprite Tester
+Launches an interactive preview tool. You can:
+- View all poses and expressions
+- Test different backgrounds
+- See how the character will look in-game
+
+Open Output Folder
+Opens the character folder in your file explorer. From here you can:
+- Copy files to your game project
+- Review individual images
+- Make manual adjustments if needed
+
+USING IN REN'PY
+Copy the entire character folder to your game's images directory. The character.yml file contains all the metadata Ren'Py needs.
+
+MAKING CHANGES
+If you need to regenerate or modify anything, you'll need to run the wizard again. The existing character folder will be preserved (a new one is created with a unique name).
+
+Click Finish to close the wizard."""
 
     def __init__(self, wizard, state: WizardState):
         super().__init__(wizard, state)
@@ -749,10 +820,9 @@ You can now:
         self._add_row("Voice:", self.state.voice.capitalize())
         self._add_row("Archetype:", self.state.archetype_label)
 
-        # Generation stats
-        outfit_count = len(self.state.selected_outfits)
-        if self.state.use_base_as_outfit:
-            outfit_count += 1  # Include base outfit
+        # Generation stats - use generated_outfit_keys for accurate count
+        # (includes only outfits that succeeded, already includes base if applicable)
+        outfit_count = len(self.state.generated_outfit_keys) if self.state.generated_outfit_keys else 0
         expr_count = len(self.state.expressions_sequence)
         self._add_row("Outfits Generated:", str(outfit_count))
         self._add_row("Expressions per Outfit:", str(expr_count))

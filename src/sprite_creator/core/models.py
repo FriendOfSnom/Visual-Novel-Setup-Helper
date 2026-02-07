@@ -72,6 +72,7 @@ class WizardState:
     outfit_bg_modes: Dict[int, str] = field(default_factory=dict)  # index -> "rembg" or "manual"
     outfit_cleanup_settings: List[Tuple[int, int]] = field(default_factory=list)  # (tolerance, depth)
     outfit_prompts: Dict[str, str] = field(default_factory=dict)  # key -> current prompt text
+    generated_outfit_keys: List[str] = field(default_factory=list)  # Keys of outfits that succeeded
 
     # Step 10: Expression generation (per outfit)
     expression_paths: Dict[str, Dict[str, Path]] = field(default_factory=dict)  # outfit -> {expr: path}

@@ -478,8 +478,8 @@ def show_help_modal(parent: tk.Widget, title: str, help_text: str) -> None:
     overlay.transient(root)
     overlay.grab_set()
 
-    # Size and center
-    modal_w, modal_h = 450, 350
+    # Size and center - larger to accommodate more help text
+    modal_w, modal_h = 500, 450
     root_x = root.winfo_x()
     root_y = root.winfo_y()
     root_w = root.winfo_width()
@@ -503,9 +503,13 @@ def show_help_modal(parent: tk.Widget, title: str, help_text: str) -> None:
     )
     title_label.pack(anchor="w", pady=(0, 16))
 
-    # Help text (scrollable if needed)
+    # Help text (scrollable)
     text_frame = tk.Frame(content, bg=BG_COLOR)
     text_frame.pack(fill="both", expand=True, pady=(0, 16))
+
+    # Add scrollbar
+    scrollbar = ttk.Scrollbar(text_frame, orient="vertical")
+    scrollbar.pack(side="right", fill="y")
 
     text_widget = tk.Text(
         text_frame,
@@ -517,10 +521,40 @@ def show_help_modal(parent: tk.Widget, title: str, help_text: str) -> None:
         highlightthickness=0,
         padx=0,
         pady=0,
+        yscrollcommand=scrollbar.set,
     )
     text_widget.insert("1.0", help_text)
     text_widget.configure(state="disabled")
-    text_widget.pack(fill="both", expand=True)
+    text_widget.pack(side="left", fill="both", expand=True)
+    scrollbar.configure(command=text_widget.yview)
+
+    # Capture mouse wheel events on the modal so they don't propagate to
+    # underlying canvases (fixes scroll bug on outfit/expression steps)
+    def on_mousewheel(event):
+        # Scroll the text widget
+        text_widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        return "break"  # Prevent propagation to other handlers
+
+    def on_mousewheel_linux_up(event):
+        text_widget.yview_scroll(-1, "units")
+        return "break"
+
+    def on_mousewheel_linux_down(event):
+        text_widget.yview_scroll(1, "units")
+        return "break"
+
+    # Bind to the overlay window itself (catches all wheel events in modal)
+    overlay.bind("<MouseWheel>", on_mousewheel)
+    overlay.bind("<Button-4>", on_mousewheel_linux_up)
+    overlay.bind("<Button-5>", on_mousewheel_linux_down)
+
+    # Also bind to child widgets to ensure capture
+    text_widget.bind("<MouseWheel>", on_mousewheel)
+    text_widget.bind("<Button-4>", on_mousewheel_linux_up)
+    text_widget.bind("<Button-5>", on_mousewheel_linux_down)
+    content.bind("<MouseWheel>", on_mousewheel)
+    content.bind("<Button-4>", on_mousewheel_linux_up)
+    content.bind("<Button-5>", on_mousewheel_linux_down)
 
     # Close button
     close_btn = create_primary_button(
@@ -534,7 +568,7 @@ def show_help_modal(parent: tk.Widget, title: str, help_text: str) -> None:
     # Escape to close
     overlay.bind("<Escape>", lambda e: overlay.destroy())
 
-    # Focus
+    # Focus the overlay to ensure it receives events
     overlay.focus_set()
 
 
