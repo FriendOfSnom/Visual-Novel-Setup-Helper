@@ -59,6 +59,12 @@ class OutfitReviewStep(WizardStep):
 
 This step shows all generated outfits. Scroll horizontally to see them all.
 
+IMPORTANT: You can do touch-ups on the NEXT step!
+Don't worry about getting backgrounds perfect here. The Expression Review step has "Touch Up BG" and "Remove BG" buttons for each expression, so you can fix any issues there. Focus on approving outfits you like.
+
+WHAT HAPPENS NEXT
+When you click Next, the tool generates expressions (facial variations) for EACH outfit shown here. The Tolerance/Depth settings you set here will be used as defaults for expression background removal.
+
 PREVIEW BACKGROUND (Top Right)
 Use the dropdown to preview outfits on different backgrounds:
 - Black/White: Solid colors to check edges
@@ -88,6 +94,8 @@ Depth (0-50): How many cleanup passes to run.
 - Default: 5
 
 Click "Apply" after adjusting sliders to see the result.
+
+These settings carry forward to expression generation, so getting them right here saves time later.
 
 MANUAL MODE
 Click "Switch to Manual BG Removal" to use click-based removal instead. In manual mode, you click on areas to remove (flood-fill style).

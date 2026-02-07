@@ -46,6 +46,11 @@ class ExpressionReviewStep(WizardStep):
 
 This step shows all generated expressions for each outfit.
 
+HOW THIS RELATES TO THE PREVIOUS STEP
+The background removal settings (Tolerance/Depth) you set on the Outfit Review step were used to process these expressions. If backgrounds look good here, those settings worked well!
+
+If backgrounds need work, use the "Touch Up BG" or "Remove BG" buttons below each expression to fix them individually.
+
 IMPORTANT: You must review ALL outfits before proceeding.
 
 NAVIGATION
@@ -60,16 +65,16 @@ The Next button is disabled until you've viewed every outfit at least once.
 EXPRESSION CARDS
 Each card shows one expression with its number and description.
 
-Expression 0 (neutral) cannot be regenerated - it uses the outfit image directly.
+Expression 0 (neutral) cannot be regenerated - it uses the outfit image directly and is the base for all other expressions.
 
 REGENERATION
-Click "Regen" on any expression (except 0) to generate a new version. The AI will create a different interpretation of that expression.
+Click "Regen" on any expression (except 0) to generate a new version. The AI will create a different interpretation of that expression while keeping the same outfit.
 
-BACKGROUND TOUCH-UP
+BACKGROUND TOUCH-UP (This is where you fix any background issues!)
 Each expression has a background button:
 
 "Touch Up BG" (if outfit used auto mode):
-Opens a click-based editor starting from the auto-removed result. Use this to clean up any remaining background artifacts.
+Opens a click-based editor starting from the auto-removed result. Use this to clean up any remaining background artifacts around hair, edges, etc.
 
 "Remove BG" (if outfit used manual mode):
 Opens a click-based editor starting from the original black-background image. Use this for full manual background removal.
@@ -83,7 +88,7 @@ In the editor:
 WORKFLOW
 1. Use Prev/Next to view each outfit's expressions
 2. Regenerate any expressions that don't look right
-3. Touch up backgrounds if needed
+3. Use "Touch Up BG" to fix any background issues you notice
 4. Once all outfits are viewed, click Next
 
 Note: Changes are saved automatically. You can go back and forth between outfits without losing work."""

@@ -337,8 +337,8 @@ class LauncherWindow:
     def _open_api_settings(self):
         """Open the API settings dialog to view/change the Gemini API key."""
         existing_key = get_existing_api_key() or ""
-        # Show the API setup dialog (doesn't close the launcher)
-        show_api_setup(existing_key)
+        # Show the API setup dialog as modal (passes parent so it works properly)
+        show_api_setup(existing_key, parent=self.root)
 
     def _on_close(self):
         """Handle window close."""

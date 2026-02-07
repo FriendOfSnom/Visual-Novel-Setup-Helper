@@ -15,6 +15,7 @@ from ..config import (
     CONFIG_PATH,
     GEMINI_API_URL,
     BG_COLOR,
+    CARD_BG,
     TEXT_COLOR,
     TEXT_SECONDARY,
     ACCENT_COLOR,
@@ -59,14 +60,23 @@ class APISetupWindow:
     GUI dialog for entering and validating Gemini API keys.
     """
 
-    def __init__(self, existing_key: str = ""):
+    def __init__(self, existing_key: str = "", parent: Optional[tk.Tk] = None):
         """
         Initialize the API setup window.
 
         Args:
             existing_key: Pre-existing API key to display (masked)
+            parent: Optional parent window. If provided, opens as Toplevel dialog.
         """
-        self.root = tk.Tk()
+        self._is_toplevel = parent is not None
+
+        if self._is_toplevel:
+            self.root = tk.Toplevel(parent)
+            self.root.transient(parent)  # Stay on top of parent
+            self.root.grab_set()  # Make modal
+        else:
+            self.root = tk.Tk()
+
         self.root.title("API Key Setup")
         self.root.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
@@ -78,6 +88,20 @@ class APISetupWindow:
         self._is_validating = False
 
         self._build_ui()
+
+        # Center on parent if toplevel
+        if self._is_toplevel and parent:
+            self.root.update_idletasks()
+            # Center the dialog on the parent window
+            px = parent.winfo_x()
+            py = parent.winfo_y()
+            pw = parent.winfo_width()
+            ph = parent.winfo_height()
+            w = self.root.winfo_width()
+            h = self.root.winfo_height()
+            x = px + (pw - w) // 2
+            y = py + (ph - h) // 2
+            self.root.geometry(f"+{x}+{y}")
 
     def _build_ui(self):
         """Build the API setup UI."""
@@ -159,16 +183,22 @@ class APISetupWindow:
         )
         self._key_entry.pack(side="left", fill="x", expand=True)
 
-        # Show/hide password toggle
-        self._show_key = tk.BooleanVar(value=False)
-        show_btn = ttk.Checkbutton(
+        # Show/hide password toggle button
+        self._key_visible = False
+        self._show_btn = tk.Button(
             entry_frame,
             text="Show",
-            variable=self._show_key,
             command=self._toggle_key_visibility,
-            style="Dark.TCheckbutton",
+            bg=CARD_BG,
+            fg=TEXT_COLOR,
+            activebackground="#3D3D3D",
+            activeforeground=TEXT_COLOR,
+            relief="flat",
+            padx=8,
+            pady=2,
+            cursor="hand2",
         )
-        show_btn.pack(side="left", padx=(8, 0))
+        self._show_btn.pack(side="left", padx=(8, 0))
 
         # Pre-fill with masked existing key indicator
         if self._existing_key:
@@ -228,10 +258,13 @@ class APISetupWindow:
 
     def _toggle_key_visibility(self):
         """Toggle API key visibility."""
-        if self._show_key.get():
+        self._key_visible = not self._key_visible
+        if self._key_visible:
             self._key_entry.configure(show="")
+            self._show_btn.configure(text="Hide")
         else:
             self._key_entry.configure(show="*")
+            self._show_btn.configure(text="Show")
 
     def _open_api_page(self):
         """Open the Google AI Studio API key page in browser."""
@@ -310,7 +343,7 @@ class APISetupWindow:
             # Save to config
             self._save_api_key(api_key)
             # Close after short delay to show success message
-            self.root.after(800, self.root.quit)
+            self.root.after(800, self._close_window)
         else:
             self._set_status(message, DANGER_COLOR)
 
@@ -333,7 +366,15 @@ class APISetupWindow:
     def _on_cancel(self):
         """Handle cancel button or window close."""
         self._result_key = None
-        self.root.quit()
+        self._close_window()
+
+    def _close_window(self):
+        """Close the window appropriately based on window type."""
+        if self._is_toplevel:
+            self.root.grab_release()
+            self.root.destroy()
+        else:
+            self.root.quit()
 
     def run(self) -> Optional[str]:
         """
@@ -342,10 +383,15 @@ class APISetupWindow:
         Returns:
             The validated API key, or None if cancelled
         """
-        self.root.mainloop()
-        result = self._result_key
-        self.root.destroy()
-        return result
+        if self._is_toplevel:
+            # For toplevel, wait for window to close
+            self.root.wait_window(self.root)
+        else:
+            # For standalone Tk, use mainloop
+            self.root.mainloop()
+            self.root.destroy()
+
+        return self._result_key
 
 
 def get_existing_api_key() -> Optional[str]:
@@ -374,17 +420,18 @@ def get_existing_api_key() -> Optional[str]:
     return None
 
 
-def show_api_setup(existing_key: str = "") -> Optional[str]:
+def show_api_setup(existing_key: str = "", parent: Optional[tk.Tk] = None) -> Optional[str]:
     """
     Show the API setup dialog.
 
     Args:
         existing_key: Pre-existing API key to display
+        parent: Optional parent window. If provided, opens as modal dialog.
 
     Returns:
         The validated API key, or None if cancelled
     """
-    window = APISetupWindow(existing_key)
+    window = APISetupWindow(existing_key, parent=parent)
     return window.run()
 
 
