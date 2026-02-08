@@ -8,6 +8,7 @@ Provides a graphical launcher with three tool options:
 """
 
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox
 from pathlib import Path
 from typing import Optional, Callable
@@ -38,6 +39,10 @@ from .tk_common import (
 from .api_setup import show_api_setup, get_existing_api_key
 
 
+# Google AI Studio usage dashboard URL
+AI_STUDIO_USAGE_URL = "https://aistudio.google.com/usage"
+
+
 # Help text for the launcher
 LAUNCHER_HELP_TEXT = """Welcome to AI Sprite Creator!
 
@@ -57,7 +62,7 @@ Create expression sheet images from existing character folders. Use this if you 
 Sprite Tester
 Preview existing character sprites in a Ren'Py environment. Tests outfit switching, expressions, and the character loading system.
 
-Note: You'll need a Gemini API key for the Character Sprite Creator. Free credits are available for new Google accounts."""
+Note: You'll need a Google Cloud API key (not the basic AI Studio free tier). New Google Cloud accounts get $300 in free credits - see the API setup help for instructions."""
 
 
 class ToolCard(tk.Frame):
@@ -303,21 +308,34 @@ class LauncherWindow:
 
         footer_text = tk.Label(
             footer_frame,
-            text="Requires a Gemini API key for Character Sprite Creator",
+            text="Requires a Google Cloud API key (free $300 credits for new accounts)",
             bg=BG_COLOR,
             fg=TEXT_SECONDARY,
             font=SMALL_FONT,
         )
         footer_text.pack()
 
+        # Button row for API settings and usage
+        btn_row = tk.Frame(footer_frame, bg=BG_COLOR)
+        btn_row.pack(pady=(10, 0))
+
         # API Settings button
         settings_btn = create_secondary_button(
-            footer_frame,
-            "⚙ Gemini API Settings",
+            btn_row,
+            "API Settings",
             self._open_api_settings,
-            width=20,
+            width=14,
         )
-        settings_btn.pack(pady=(10, 0))
+        settings_btn.pack(side="left", padx=(0, 8))
+
+        # View Usage button
+        usage_btn = create_secondary_button(
+            btn_row,
+            "View API Usage",
+            self._open_usage_dashboard,
+            width=14,
+        )
+        usage_btn.pack(side="left")
 
     def _select_sprite_creator(self):
         """Handle Character Sprite Creator selection."""
@@ -339,6 +357,10 @@ class LauncherWindow:
         existing_key = get_existing_api_key() or ""
         # Show the API setup dialog as modal (passes parent so it works properly)
         show_api_setup(existing_key, parent=self.root)
+
+    def _open_usage_dashboard(self):
+        """Open the Google AI Studio usage dashboard in the default browser."""
+        webbrowser.open(AI_STUDIO_USAGE_URL)
 
     def _on_close(self):
         """Handle window close."""

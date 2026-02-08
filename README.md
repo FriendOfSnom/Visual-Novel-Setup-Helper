@@ -468,10 +468,16 @@ default_outfit: "casual"
 
 ### Next button is disabled
 
--   On Character step: Click "Accept Crop" after setting crop line
+-   On Character step: Fill in Voice, Name, and Archetype, then click "Accept Crop"
 -   On Review step: Check the acknowledgment box if warning is shown
 -   On Expression Review: Navigate through all outfits (Prev/Next) before continuing
 -   During generation: Wait for the loading screen to complete
+
+### Where are the log files?
+
+-   Logs are saved to `logs/sprite_creator.log` next to the executable (or project root in development)
+-   The log file is wiped on each restart
+-   Useful for debugging issues - include log contents when reporting bugs
 
 ---
 
@@ -485,6 +491,16 @@ default_outfit: "casual"
 -   Comprehensive help system with detailed instructions on every step (click the ? button)
 -   Image normalization and modification within the wizard (no separate tools needed)
 -   Integrated crop tool in character setup step
+
+**Launcher Improvements:**
+-   API Settings button to configure Gemini API key
+-   View API Usage button opens Google AI Studio dashboard in browser
+-   Better error handling for API key validation
+
+**Required Fields Validation:**
+-   Voice, Name, and Archetype now required before proceeding on Character step
+-   Accept Crop and Generate buttons disabled until all fields are filled
+-   Clear tip messages guide users to complete required fields first
 
 **Safety & Content Handling:**
 -   Age enforcement in image normalization (characters appear 18+)
@@ -500,6 +516,7 @@ default_outfit: "casual"
     -   Athletic wear alternatives as final fallback
 -   Random, Custom, and Standard (uniform only) generation modes
 -   Custom outfit support with user-defined names and descriptions
+-   ST Style toggle: Enable/disable Student Transfer style references
 
 **Background Removal Improvements:**
 -   Tolerance (0-150) and Depth (0-50) sliders for fine-tuned edge cleanup
@@ -507,6 +524,7 @@ default_outfit: "casual"
 -   Manual mode: Click-based flood fill with adjustable threshold
 -   Touch Up BG / Remove BG buttons on expression review
 -   Background preview dropdown (Black/White/Game backgrounds)
+-   Fixed manual BG removal not saving/displaying correctly
 
 **Expression Generation:**
 -   Must review all outfits before proceeding (prevents missed issues)
@@ -516,9 +534,17 @@ default_outfit: "casual"
 
 **Finalization:**
 -   Eye line picker with visual guide (for dialogue positioning)
+-   Eye line now spans both reference and user canvases for easier comparison
 -   Name color picker (samples from hair)
--   Side-by-side scale comparison with reference sprites
+-   Side-by-side scale comparison with 77 reference sprites from Student Transfer
+-   **Apply scale to images** checkbox: Optionally resize all images on disk (saves space)
 -   Automatic character.yml and expression sheet generation
+
+**Error Handling & Debugging:**
+-   Copyable error messages with "Copy to Clipboard" button
+-   File-based logging to `logs/sprite_creator.log` (next to .exe or project root)
+-   Log file wipes on each restart for clean debugging
+-   Uncaught exceptions logged automatically
 
 **UI/UX Polish:**
 -   Help modal scroll fix (no longer scrolls content behind on outfit/expression steps)
@@ -526,11 +552,20 @@ default_outfit: "casual"
 -   State preservation for slider positions between regenerations
 -   Loading screens during API operations
 -   Disabled navigation buttons during generation
+-   Consistent orange (💡) tip styling across all wizard pages
+-   Prominent help buttons (?) on all wizard steps
+
+**Bug Fixes:**
+-   API Setup dialog now works properly from launcher (threading fix)
+-   Finish button now opens character folder and closes app
+-   Fixed navigation crash when going back from Complete step
+-   Fixed Sprite Tester folder creation on first run
 
 **Code Cleanup:**
 -   Removed dead code (PromptGenerationStep, unused prompt builders)
 -   Centralized WizardState in core/models.py
 -   Cleaner module organization
+-   Added logging_utils module for structured logging
 
 ### v2.0.0
 

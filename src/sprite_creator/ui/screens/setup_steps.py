@@ -40,6 +40,7 @@ from ..tk_common import (
 )
 from ..dialogs import load_name_pool, pick_random_name
 from .base import WizardStep, WizardState
+from ...logging_utils import log_info, log_error, log_generation_start, log_generation_complete
 
 
 # =============================================================================
@@ -238,6 +239,19 @@ class CharacterStep(WizardStep):
 
 This step configures your character's identity and prepares the base image.
 
+═══════════════════════════════════════════════════════════════════════════
+IMPORTANT: COMPLETE THE LEFT SIDE FIRST!
+
+You MUST fill out ALL fields on the left (Voice, Name, Archetype) before
+the "Generate Character" button becomes active. This information is
+required to generate style-matched character sprites.
+
+1. Click "Girl" or "Boy" to set Voice
+2. Enter or accept the suggested Name
+3. Select an Archetype from the dropdown
+4. THEN the Generate button will enable
+═══════════════════════════════════════════════════════════════════════════
+
 LEFT SIDE: CHARACTER INFO
 
 Voice (Required)
@@ -246,7 +260,7 @@ Click "Girl" or "Boy" to set the character's voice. This determines:
 - Which archetypes are available
 - Pronoun references in some prompts
 
-Name
+Name (Required)
 A random name is suggested when you pick a voice. You can type any name you want. This appears in the final character.yml file.
 
 Archetype (Required)
@@ -267,15 +281,33 @@ After normalization, you can optionally modify the character by typing instructi
 
 Use "Reset to Normalized" to undo modifications.
 
-CROP TOOL
-Click anywhere on the image to set a horizontal crop line (shown in red). This crops the image at that point - useful for removing feet or adjusting the frame.
+═══════════════════════════════════════════════════
+CROP TOOL - CROP AT MID-THIGH!
+═══════════════════════════════════════════════════
 
-- Click "Accept Crop" to apply the crop
-- Click "Restore Original" to undo and start over
-- The Next button is disabled until you accept
+Click anywhere on the image to set a horizontal crop line (shown in red).
+
+IMPORTANT: Crop at mid-thigh level! This ensures:
+• Consistent framing across all outfits and expressions
+• No feet visible (feet cause issues with background removal)
+• Proper positioning for visual novel dialogue scenes
+
+How to use:
+1. Click on the image where you want to crop (mid-thigh recommended)
+2. The red line shows where the image will be cut
+3. Click "Accept Crop" to apply
+4. Click "Restore Original" to undo and try again
+
+The Next button is disabled until you accept the crop.
 
 For Text Prompt Mode:
 Fill in the "Character Description" box with details about appearance, then click "Generate Character". Once generated, use the crop tool as described above.
+
+ST Style Toggle
+The "Use ST style references" checkbox controls the art style:
+- Checked (default): Uses Student Transfer reference art to match the ST visual style
+- Unchecked: No style references are sent - describe any art style you want in your prompt
+  (e.g., "pixel art style", "JoJo's Bizarre Adventure style", "watercolor painting")
 
 Click Next when your character looks right."""
 
@@ -316,6 +348,7 @@ Click Next when your character looks right."""
         self._generate_btn: Optional[tk.Button] = None
         self._generation_status: Optional[tk.Label] = None
         self._generated_image: Optional[Image.Image] = None
+        self._use_st_style_var: Optional[tk.IntVar] = None  # ST style toggle
 
         # For image mode: normalization and modification
         self._image_modify_frame: Optional[tk.Frame] = None
@@ -411,6 +444,9 @@ Click Next when your character looks right."""
         )
         self._name_entry.pack(side="left")
 
+        # Update buttons when name changes (generate button, next button, accept crop button)
+        self._name_var.trace_add("write", lambda *_: self._on_name_change())
+
         # Archetype selection
         arch_frame = tk.Frame(self._left_col, bg=BG_COLOR)
         arch_frame.pack(fill="x", pady=(0, 12))
@@ -432,6 +468,15 @@ Click Next when your character looks right."""
 
         # Concept text (only shown for prompt mode)
         self._concept_frame = tk.Frame(self._left_col, bg=BG_COLOR)
+
+        # Tip telling users to complete the left side first
+        tk.Label(
+            self._concept_frame,
+            text="💡 Complete Voice, Name, and Archetype above before generating.",
+            bg=BG_COLOR,
+            fg="#FFB347",  # Warning orange
+            font=SMALL_FONT,
+        ).pack(anchor="w", pady=(0, 12))
 
         tk.Label(
             self._concept_frame,
@@ -473,7 +518,25 @@ Click Next when your character looks right."""
         )
         self._concept_text.pack(fill="x")
 
-        # Generate button (prompt mode only)
+        # ST style toggle (prompt mode only)
+        self._use_st_style_var = tk.IntVar(value=1)  # Default ON
+        st_style_chk = ttk.Checkbutton(
+            self._concept_frame,
+            text="Use ST style references",
+            variable=self._use_st_style_var,
+            style="Dark.TCheckbutton",
+        )
+        st_style_chk.pack(anchor="w", pady=(10, 0))
+
+        tk.Label(
+            self._concept_frame,
+            text="When checked, uses Student Transfer reference art. Uncheck to use any style.",
+            bg=BG_COLOR,
+            fg=TEXT_SECONDARY,
+            font=SMALL_FONT,
+        ).pack(anchor="w", pady=(2, 0))
+
+        # Generate button (prompt mode only) - starts disabled until all fields complete
         self._generate_btn = create_primary_button(
             self._concept_frame,
             "Generate Character",
@@ -481,6 +544,7 @@ Click Next when your character looks right."""
             width=18,
         )
         self._generate_btn.pack(pady=(10, 0))
+        self._generate_btn.configure(state="disabled")  # Disabled until voice/name/archetype filled
 
         self._generation_status = tk.Label(
             self._concept_frame,
@@ -508,10 +572,12 @@ Click Next when your character looks right."""
 
         tk.Label(
             self._crop_frame,
-            text="Click to set crop line at mid-thigh level, then click Accept Crop.",
+            text="⚠️ IMPORTANT: Click to set crop at MID-THIGH level, then click Accept Crop.\n"
+                 "Do NOT include feet - they cause issues with background removal!",
             bg=BG_COLOR,
-            fg=TEXT_SECONDARY,
+            fg="#FFB347",  # Warning orange
             font=SMALL_FONT,
+            justify="center",
         ).pack(pady=(0, 6))
 
         # Canvas container
@@ -549,6 +615,8 @@ Click Next when your character looks right."""
             width=12,
         )
         self._accept_crop_btn.pack(side="left", padx=(0, 8))
+        # Start disabled - requires voice, name, and archetype to be filled
+        self._accept_crop_btn.configure(state="disabled")
 
         self._restore_btn = create_secondary_button(
             self._crop_buttons_frame,
@@ -562,6 +630,15 @@ Click Next when your character looks right."""
         # === Image Mode: Modify Character Section (shown in image mode only) ===
         self._image_modify_frame = tk.Frame(self._left_col, bg=BG_COLOR)
         # Will be packed in on_enter for image mode
+
+        # Tip telling users to complete the left side first (same as prompt mode)
+        tk.Label(
+            self._image_modify_frame,
+            text="💡 Complete Voice, Name, and Archetype above before accepting crop.",
+            bg=BG_COLOR,
+            fg="#FFB347",  # Warning orange
+            font=SMALL_FONT,
+        ).pack(anchor="w", pady=(0, 12))
 
         tk.Label(
             self._image_modify_frame,
@@ -638,6 +715,78 @@ Click Next when your character looks right."""
 
         self._name_entry.focus_set()
 
+        # Check if we can now enable the Next button, Generate button, and Accept Crop button
+        self._update_next_button_state()
+        self._update_generate_button_state()
+        self._update_accept_crop_button_state()
+
+    def _update_next_button_state(self) -> None:
+        """Update the Next button state based on all requirements."""
+        # All requirements must be met to enable Next:
+        # 1. Voice must be selected
+        # 2. Name must be entered (not empty/whitespace)
+        # 3. Archetype must be selected
+        # 4. Crop must be accepted (or image not yet loaded)
+
+        voice_ok = bool(self._voice_var and self._voice_var.get())
+        name_ok = bool(self._name_var and self._name_var.get().strip())
+        archetype_ok = bool(self._arch_var and self._arch_var.get())
+        crop_ok = self._crop_accepted
+
+        # Special case: if no image loaded yet (prompt mode before generation),
+        # crop isn't required yet
+        if self._crop_original_img is None:
+            # For prompt mode, don't enable until image is generated and crop accepted
+            if self.state.source_mode == "prompt":
+                crop_ok = False  # Will be checked after generation
+
+        if voice_ok and name_ok and archetype_ok and crop_ok:
+            self.wizard._next_btn.configure(state="normal")
+        else:
+            self.wizard._next_btn.configure(state="disabled")
+
+    def _update_generate_button_state(self) -> None:
+        """Update the Generate Character button state based on required fields.
+
+        For prompt mode, requires voice, name, and archetype to all be filled
+        before the Generate button becomes active.
+        """
+        if self._generate_btn is None:
+            return
+
+        voice_ok = bool(self._voice_var and self._voice_var.get())
+        name_ok = bool(self._name_var and self._name_var.get().strip())
+        archetype_ok = bool(self._arch_var and self._arch_var.get())
+
+        if voice_ok and name_ok and archetype_ok:
+            self._generate_btn.configure(state="normal")
+        else:
+            self._generate_btn.configure(state="disabled")
+
+    def _required_fields_filled(self) -> bool:
+        """Check if all required fields (voice, name, archetype) are filled."""
+        voice_ok = bool(self._voice_var and self._voice_var.get())
+        name_ok = bool(self._name_var and self._name_var.get().strip())
+        archetype_ok = bool(self._arch_var and self._arch_var.get())
+        return voice_ok and name_ok and archetype_ok
+
+    def _on_name_change(self) -> None:
+        """Handle name field changes - update all dependent button states."""
+        self._update_generate_button_state()
+        self._update_next_button_state()
+        self._update_accept_crop_button_state()
+
+    def _update_accept_crop_button_state(self) -> None:
+        """Update Accept Crop button state - requires voice, name, and archetype."""
+        if self._accept_crop_btn is None:
+            return
+
+        # Accept Crop requires voice, name, and archetype to all be filled
+        if self._required_fields_filled():
+            self._accept_crop_btn.configure(state="normal")
+        else:
+            self._accept_crop_btn.configure(state="disabled")
+
     def _update_archetype_menu(self) -> None:
         """Update archetype menu based on voice."""
         menu = self._arch_menu["menu"]
@@ -656,13 +805,23 @@ Click Next when your character looks right."""
 
         self._arch_var.set(labels[0] if labels else "")
         for lbl in labels:
-            menu.add_command(label=lbl, command=lambda v=lbl: self._arch_var.set(v))
+            menu.add_command(label=lbl, command=lambda v=lbl: self._on_archetype_change(v))
+
+    def _on_archetype_change(self, value: str) -> None:
+        """Handle archetype selection change."""
+        self._arch_var.set(value)
+        self._update_next_button_state()
+        self._update_generate_button_state()
+        self._update_accept_crop_button_state()
 
     def _on_generate_click(self) -> None:
         """Handle Generate button click for prompt mode."""
-        # Validate required fields first
+        # Validate required fields first (safety check - button should be disabled if these aren't filled)
         if not self._voice_var.get():
             messagebox.showerror("Missing Voice", "Please select a voice before generating.")
+            return
+        if not self._name_var.get().strip():
+            messagebox.showerror("Missing Name", "Please enter a name before generating.")
             return
         if not self._arch_var.get():
             messagebox.showerror("Missing Archetype", "Please select an archetype before generating.")
@@ -672,11 +831,9 @@ Click Next when your character looks right."""
             messagebox.showerror("Missing Description", "Please describe the character before generating.")
             return
 
-        # Save state
+        # Save state (name is now required, so no fallback needed)
         self.state.voice = self._voice_var.get()
-        self.state.display_name = self._name_var.get().strip() or pick_random_name(
-            self.state.voice, self._girl_names, self._boy_names
-        )
+        self.state.display_name = self._name_var.get().strip()
         self.state.archetype_label = self._arch_var.get()
         self.state.concept_text = concept
 
@@ -696,7 +853,9 @@ Click Next when your character looks right."""
             from io import BytesIO
             from ...api.gemini_client import get_api_key, call_gemini_text_or_refs
             from ...api.prompt_builders import build_prompt_for_idea
-            from ...config import REF_SPRITES_DIR
+            from ...processing.image_utils import get_reference_images_for_archetype
+
+            log_generation_start("character_from_text")
 
             # Get API key (should already be set from earlier steps)
             api_key = self.state.api_key or get_api_key(use_gui=True)
@@ -708,11 +867,17 @@ Click Next when your character looks right."""
                 gender_style=self.state.gender_style,
             )
 
-            # Get reference images if available
+            # Get reference images for this archetype (only if ST style toggle is ON)
             ref_images = []
-            if REF_SPRITES_DIR.exists():
-                for ext in ("*.png", "*.jpg", "*.jpeg"):
-                    ref_images.extend(list(REF_SPRITES_DIR.glob(ext))[:3])
+            use_st_style = self._use_st_style_var and self._use_st_style_var.get() == 1
+            if use_st_style:
+                # Use the proper function to get archetype-specific reference images
+                ref_images = get_reference_images_for_archetype(self.state.archetype_label)
+                log_info(f"Loading style refs for archetype '{self.state.archetype_label}': found {len(ref_images)} images")
+                if ref_images:
+                    log_info(f"Reference images: {[p.name for p in ref_images]}")
+
+            log_info(f"Generating character with ST style: {use_st_style}, refs: {len(ref_images)}")
 
             # Generate image (skip background removal - we'll do it later)
             result_bytes = call_gemini_text_or_refs(
@@ -725,13 +890,16 @@ Click Next when your character looks right."""
             if result_bytes:
                 # Convert bytes to PIL Image
                 self._generated_image = Image.open(BytesIO(result_bytes)).convert("RGBA")
+                log_generation_complete("character_from_text", True)
                 # Schedule UI update on main thread
                 self._crop_canvas.after(0, self._on_generation_complete)
             else:
+                log_generation_complete("character_from_text", False, "No image returned")
                 self._crop_canvas.after(0, lambda: self._on_generation_error("No image returned"))
 
         except Exception as e:
             error_msg = str(e)
+            log_generation_complete("character_from_text", False, error_msg)
             self._crop_canvas.after(0, lambda: self._on_generation_error(error_msg))
 
     def _on_generation_complete(self) -> None:
@@ -747,8 +915,8 @@ Click Next when your character looks right."""
         self._crop_frame.pack(fill="both", expand=True)
         self._display_crop_image()
 
-        # Disable Next until crop is accepted
-        self.wizard._next_btn.configure(state="disabled")
+        # Check if all requirements are met (will be disabled since crop not accepted yet)
+        self._update_next_button_state()
 
     def _on_generation_error(self, error: str) -> None:
         """Handle generation error."""
@@ -881,8 +1049,8 @@ Click Next when your character looks right."""
         self._accept_crop_btn.pack_forget()
         self._restore_btn.pack(side="left")
 
-        # Enable wizard's Next button now that crop is accepted
-        self.wizard._next_btn.configure(state="normal")
+        # Check if all requirements are now met (voice, archetype, crop)
+        self._update_next_button_state()
 
     def _on_restore_original(self) -> None:
         """Restore the original uncropped image."""
@@ -925,9 +1093,8 @@ Click Next when your character looks right."""
                     justify="center",
                 )
             else:
-                # Generated image exists - disable Next until crop accepted
-                if not self._crop_accepted:
-                    self.wizard._next_btn.configure(state="disabled")
+                # Generated image exists - check all requirements
+                self._update_next_button_state()
         else:
             # Image mode
             self._concept_frame.pack_forget()
@@ -943,8 +1110,8 @@ Click Next when your character looks right."""
                     # Already normalized - show the content
                     self._show_image_mode_content()
                     self._display_crop_image()
-                    if not self._crop_accepted:
-                        self.wizard._next_btn.configure(state="disabled")
+                    # Check all requirements (voice, archetype, crop)
+                    self._update_next_button_state()
                 else:
                     # Still normalizing - show loading (shouldn't happen normally)
                     self.show_loading("Normalizing image...")
@@ -1033,8 +1200,8 @@ Click Next when your character looks right."""
         # Show normalized image
         self._display_crop_image()
 
-        # Disable Next until crop is accepted
-        self.wizard._next_btn.configure(state="disabled")
+        # Check all requirements (voice, archetype, crop)
+        self._update_next_button_state()
 
     def _on_normalization_error(self, error: str) -> None:
         """Handle normalization error - fall back to original image."""
@@ -1049,7 +1216,8 @@ Click Next when your character looks right."""
 
         # Use original image without normalization
         self._load_crop_image()
-        self.wizard._next_btn.configure(state="disabled")
+        # Check all requirements (voice, archetype, crop)
+        self._update_next_button_state()
 
     def _on_modify_click(self) -> None:
         """Handle Modify Character button click."""
@@ -1134,8 +1302,8 @@ Click Next when your character looks right."""
         self._crop_accepted = False
         self._display_crop_image()
 
-        # Disable Next until crop is accepted
-        self.wizard._next_btn.configure(state="disabled")
+        # Check all requirements (crop now needs to be re-accepted)
+        self._update_next_button_state()
 
     def _on_modification_error(self, error: str) -> None:
         """Handle modification error."""
@@ -1158,7 +1326,8 @@ Click Next when your character looks right."""
         self._reset_to_normalized_btn.pack_forget()
 
         self._image_status.configure(text="Reset to normalized image.", fg=ACCENT_COLOR)
-        self.wizard._next_btn.configure(state="disabled")
+        # Check all requirements (crop now needs to be re-accepted)
+        self._update_next_button_state()
 
     def validate(self) -> bool:
         if not self._voice_var.get():
@@ -1193,11 +1362,15 @@ Click Next when your character looks right."""
             # Save to temp file for generation steps
             self._save_cropped_image_for_generation()
 
+        # Require name (no fallback to random)
+        name_value = self._name_var.get().strip()
+        if not name_value:
+            messagebox.showerror("Missing Name", "Please enter a name for the character.")
+            return False
+
         # Save data
         self.state.voice = self._voice_var.get()
-        self.state.display_name = self._name_var.get().strip() or pick_random_name(
-            self.state.voice, self._girl_names, self._boy_names
-        )
+        self.state.display_name = name_value
         self.state.archetype_label = self._arch_var.get()
 
         # For image mode, store the (possibly cropped) image

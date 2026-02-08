@@ -1,0 +1,12 @@
+eye_line: 0.185
+name_color: '#f7cd8e'
+poses:
+  b:
+    facing: right
+  c:
+    center_width: 160
+    facing: left
+  d:
+    center_width: 160
+    facing: left
+scale: 1.1

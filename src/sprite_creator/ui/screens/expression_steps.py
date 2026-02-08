@@ -28,8 +28,10 @@ from ...config import (
 from ..tk_common import (
     create_primary_button,
     create_secondary_button,
+    show_error_dialog,
 )
 from .base import WizardStep, WizardState
+from ...logging_utils import log_info, log_error, log_generation_start, log_generation_complete
 
 
 class ExpressionReviewStep(WizardStep):
@@ -53,6 +55,54 @@ If backgrounds need work, use the "Touch Up BG" or "Remove BG" buttons below eac
 
 IMPORTANT: You must review ALL outfits before proceeding.
 
+═══════════════════════════════════════════════════
+TROUBLESHOOTING - WHEN TO REGENERATE
+═══════════════════════════════════════════════════
+
+REGENERATE if you see any of these issues:
+
+• Expression goes off-screen or is cropped weirdly
+  The AI sometimes generates images that extend past the frame. Click "Regen" to try again.
+
+• Bad framing / expression doesn't match others
+  If one expression looks zoomed in/out differently, or the character is positioned differently, regenerate to get better consistency.
+
+• Showing feet or different body position
+  All expressions should match the base outfit's framing. If not, regenerate.
+
+• Arm/body pixels look "eaten" or deleted
+  This is caused by the automatic background removal (rembg) being too aggressive. You have two options:
+  1. Click "Regen" - may produce a version that rembg handles better
+  2. Use "Touch Up BG" or "Remove BG" to manually fix it (see below)
+
+═══════════════════════════════════════════════════
+HOW TO USE THE FLOOD FILL / TOUCH-UP TOOL
+═══════════════════════════════════════════════════
+
+Click "Touch Up BG" or "Remove BG" to open the editor:
+
+1. CLICK on background areas to remove them
+   Each click removes a connected area of similar color (flood fill).
+
+2. ADJUST TOLERANCE (slider at top)
+   - Low tolerance (10-30): Only removes very similar colors
+   - High tolerance (50-80): Removes a wider range of colors
+   Start with lower values to avoid accidentally removing parts of the character.
+
+3. Work from OUTSIDE IN
+   Click on the main background area first, then work toward edges.
+
+4. For FINE DETAILS (hair strands, edges):
+   Lower the tolerance and click carefully on remaining spots.
+
+5. RESTART button: Undoes ALL your changes and starts over.
+
+6. Click ACCEPT when the background is fully removed.
+
+Tip: If you switched to "Manual Mode" on the previous step because rembg was eating arm pixels, use "Remove BG" here to manually remove the black background while preserving the full character.
+
+═══════════════════════════════════════════════════
+
 NAVIGATION
 Use the "< Prev" and "Next >" buttons to switch between outfits.
 
@@ -70,7 +120,7 @@ Expression 0 (neutral) cannot be regenerated - it uses the outfit image directly
 REGENERATION
 Click "Regen" on any expression (except 0) to generate a new version. The AI will create a different interpretation of that expression while keeping the same outfit.
 
-BACKGROUND TOUCH-UP (This is where you fix any background issues!)
+BACKGROUND TOUCH-UP
 Each expression has a background button:
 
 "Touch Up BG" (if outfit used auto mode):
@@ -78,12 +128,6 @@ Opens a click-based editor starting from the auto-removed result. Use this to cl
 
 "Remove BG" (if outfit used manual mode):
 Opens a click-based editor starting from the original black-background image. Use this for full manual background removal.
-
-In the editor:
-- Click on background areas to remove them (flood fill)
-- Adjust tolerance with the slider
-- Click "Restart" to undo all changes
-- Click "Accept" when done
 
 WORKFLOW
 1. Use Prev/Next to view each outfit's expressions
@@ -106,6 +150,10 @@ Note: Changes are saved automatically. You can go back and forth between outfits
         self._progress_label: Optional[tk.Label] = None
         # Store cleanup data for manual BG removal: {"outfit_name": {"0": (orig_bytes, rembg_bytes), ...}}
         self._expression_cleanup_data: Dict[str, Dict[str, Tuple[bytes, bytes]]] = {}
+        # Per-card loading: {(outfit_name, expr_key): card_frame}
+        self._expr_card_frames: Dict[Tuple[str, str], tk.Frame] = {}
+        self._expr_card_overlays: Dict[Tuple[str, str], tk.Frame] = {}
+        self._regenerating_expr: Optional[Tuple[str, str]] = None  # (outfit, expr_key)
 
     def build_ui(self, parent: tk.Frame) -> None:
         parent.configure(bg=BG_COLOR)
@@ -157,6 +205,18 @@ Note: Changes are saved automatically. You can go back and forth between outfits
             width=8
         )
         self._next_outfit_btn.pack(side="right", padx=(10, 20))
+
+        # Inline tip
+        tk.Label(
+            parent,
+            text="💡 Use 'Touch Up BG' or 'Remove BG' buttons to fix background issues on any expression. "
+                 "You must view ALL outfits before proceeding.",
+            bg=BG_COLOR,
+            fg="#FFB347",  # Warning orange
+            font=SMALL_FONT,
+            wraplength=800,
+            justify="left",
+        ).pack(fill="x", pady=(0, 8))
 
         # Scrollable canvas for expression cards (horizontal like outfits)
         canvas_frame = tk.Frame(parent, bg=BG_COLOR)
@@ -343,13 +403,22 @@ Note: Changes are saved automatically. You can go back and forth between outfits
             return
 
         outfit_name = outfit_names[self._current_outfit_idx]
+        outfit_num = self._current_outfit_idx + 1
+        total_outfits = len(outfit_names)
         self._status_label.configure(
-            text=f"Generating expressions for {outfit_name}... ({self._current_outfit_idx + 1}/{len(outfit_names)})"
+            text=f"Generating expressions for {outfit_name}... ({outfit_num}/{total_outfits})"
         )
+
+        def update_expression_progress(current: int, total: int, expression_name: str):
+            """Update loading message with per-expression progress."""
+            self.wizard.root.after(0, lambda: self.show_loading(
+                f"Outfit {outfit_num}/{total_outfits}: {outfit_name}\n"
+                f"Expression {current}/{total}: {expression_name.replace('_', ' ').title()}"
+            ))
 
         def generate():
             try:
-                expr_paths, cleanup_dict = self._do_expression_generation(outfit_name)
+                expr_paths, cleanup_dict = self._do_expression_generation(outfit_name, update_expression_progress)
                 self.wizard.root.after(0, lambda n=outfit_name, p=expr_paths, c=cleanup_dict: self._on_outfit_expressions_complete(n, p, c))
             except Exception as e:
                 error_msg = str(e)
@@ -358,9 +427,11 @@ Note: Changes are saved automatically. You can go back and forth between outfits
         thread = threading.Thread(target=generate, daemon=True)
         thread.start()
 
-    def _do_expression_generation(self, outfit_name: str) -> Tuple[Dict[str, Path], Dict[str, Tuple[bytes, bytes]]]:
+    def _do_expression_generation(self, outfit_name: str, progress_callback=None) -> Tuple[Dict[str, Path], Dict[str, Tuple[bytes, bytes]]]:
         """Generate expressions for one outfit."""
         from ...processing import generate_expressions_for_single_outfit_once
+
+        log_generation_start(f"expressions_{outfit_name}", count=len(self.state.expressions_sequence))
 
         # Find the outfit path
         outfit_names = self._get_outfit_names()
@@ -396,6 +467,7 @@ Note: Changes are saved automatically. You can go back and forth between outfits
             edge_cleanup_passes=edge_cleanup_passes,
             for_interactive_review=True,  # Need cleanup_data for manual BG removal
             bg_removal_mode=bg_removal_mode,
+            progress_callback=progress_callback,
         )
 
         # Convert lists to dicts keyed by expression index
@@ -421,6 +493,8 @@ Note: Changes are saved automatically. You can go back and forth between outfits
 
     def _on_outfit_expressions_complete(self, outfit_name: str, expr_paths: Dict[str, Path], cleanup_dict: Dict[str, Tuple[bytes, bytes]]) -> None:
         """Handle completion of one outfit's expressions."""
+        log_generation_complete(f"expressions_{outfit_name}", True, f"Generated {len(expr_paths)} expressions")
+
         # Store in state
         if not self.state.expression_paths:
             self.state.expression_paths = {}
@@ -436,9 +510,16 @@ Note: Changes are saved automatically. You can go back and forth between outfits
     def _on_generation_error(self, error: str) -> None:
         """Handle generation error."""
         self._is_generating = False
-        self.hide_loading()
+        log_generation_complete("expressions", False, error)
+        # Hide per-card loading if regenerating single expression, otherwise hide full-screen loading
+        if self._regenerating_expr is not None:
+            outfit_name, expr_key = self._regenerating_expr
+            self._hide_expr_card_loading(outfit_name, expr_key)
+            self._regenerating_expr = None
+        else:
+            self.hide_loading()
         self._status_label.configure(text=f"Error: {error}", fg="#ff5555")
-        messagebox.showerror("Generation Error", f"Failed to generate expressions:\n\n{error}")
+        show_error_dialog(self._canvas, "Generation Error", f"Failed to generate expressions:\n\n{error}")
 
     def _show_outfit_expressions(self) -> None:
         """Display expressions for the currently selected outfit (horizontal layout like outfits)."""
@@ -446,6 +527,8 @@ Note: Changes are saved automatically. You can go back and forth between outfits
         for widget in self._inner_frame.winfo_children():
             widget.destroy()
         self._img_refs.clear()
+        self._expr_card_frames.clear()
+        self._expr_card_overlays.clear()
 
         # Update progress indicator
         self._update_progress_indicator()
@@ -469,6 +552,7 @@ Note: Changes are saved automatically. You can go back and forth between outfits
 
             card = self._build_expression_card(outfit_name, expr_key, expr_path, max_thumb_h)
             card.grid(row=0, column=col, padx=10, pady=6)
+            self._expr_card_frames[(outfit_name, expr_key)] = card
             col += 1
 
     def _build_expression_card(self, outfit_name: str, expr_key: str, path: Path, max_h: int) -> tk.Frame:
@@ -476,9 +560,16 @@ Note: Changes are saved automatically. You can go back and forth between outfits
         card = tk.Frame(self._inner_frame, bg=CARD_BG, padx=6, pady=4)
 
         # Load image with height constraint (like outfit step)
-        # Read bytes directly to avoid any file caching issues
+        # Use bytes from cleanup_data if available (avoids file caching issues after edits)
         try:
-            img = Image.open(BytesIO(path.read_bytes())).convert("RGBA")
+            if (outfit_name in self._expression_cleanup_data and
+                expr_key in self._expression_cleanup_data[outfit_name]):
+                # Use the current (potentially edited) bytes from memory
+                _, current_bytes = self._expression_cleanup_data[outfit_name][expr_key]
+                img = Image.open(BytesIO(current_bytes)).convert("RGBA")
+            else:
+                # Fall back to reading from disk
+                img = Image.open(BytesIO(path.read_bytes())).convert("RGBA")
             # Scale to fit max height while maintaining aspect ratio
             if img.height > max_h:
                 ratio = max_h / img.height
@@ -540,14 +631,50 @@ Note: Changes are saved automatically. You can go back and forth between outfits
 
         return card
 
+    def _show_expr_card_loading(self, outfit_name: str, expr_key: str, message: str = "Regenerating...") -> None:
+        """Show a loading overlay on a specific expression card."""
+        key = (outfit_name, expr_key)
+        if key not in self._expr_card_frames:
+            return
+
+        card = self._expr_card_frames[key]
+
+        # Create semi-transparent overlay frame
+        overlay = tk.Frame(card, bg="#1a1a2e")
+        overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        # Loading message
+        tk.Label(
+            overlay,
+            text=message,
+            bg="#1a1a2e",
+            fg=TEXT_COLOR,
+            font=BODY_FONT,
+            wraplength=150,
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        self._expr_card_overlays[key] = overlay
+
+    def _hide_expr_card_loading(self, outfit_name: str, expr_key: str) -> None:
+        """Hide the loading overlay on a specific expression card."""
+        key = (outfit_name, expr_key)
+        if key in self._expr_card_overlays:
+            try:
+                self._expr_card_overlays[key].destroy()
+            except tk.TclError:
+                pass
+            del self._expr_card_overlays[key]
+
     def _regenerate_expression(self, outfit_name: str, expr_key: str) -> None:
         """Regenerate a single expression."""
         if self._is_generating:
             return
 
         self._is_generating = True
-        self._status_label.configure(text=f"Regenerating {expr_key}...")
-        self.show_loading(f"Regenerating expression...")
+        self._regenerating_expr = (outfit_name, expr_key)
+        self._status_label.configure(text=f"Regenerating expression {expr_key}...")
+        # Use per-card loading instead of full-screen overlay
+        self._show_expr_card_loading(outfit_name, expr_key, "Regenerating\nexpression...")
 
         def regenerate():
             try:
@@ -604,7 +731,8 @@ Note: Changes are saved automatically. You can go back and forth between outfits
     def _on_single_expr_complete(self, outfit_name: str, expr_key: str, new_path: Path) -> None:
         """Handle single expression regeneration completion."""
         self._is_generating = False
-        self.hide_loading()
+        self._hide_expr_card_loading(outfit_name, expr_key)
+        self._regenerating_expr = None
 
         # Update state
         self.state.expression_paths[outfit_name][expr_key] = new_path
@@ -649,28 +777,105 @@ Note: Changes are saved automatically. You can go back and forth between outfits
             messagebox.showerror("Error", "Image data is missing or invalid.")
             return
 
-        # Write to temp file for manual editing
-        temp_path = path.parent / f"_temp_manual_{expr_key}.png"
-        temp_path.write_bytes(working_bytes)
+        # Check if the expression file path still exists (may have been moved by flattening)
+        if not path.exists():
+            log_error("Manual BG removal", f"Expression file no longer exists: {path}")
+            messagebox.showerror(
+                "File Not Found",
+                f"The expression file no longer exists at:\n{path}\n\n"
+                "This can happen if you navigated back after the character was finalized. "
+                "The folder structure may have changed."
+            )
+            return
+
+        # Write to temp file for manual editing - use a safe temp location
+        # Use the expression file's directory if it exists
+        temp_dir = path.parent
+        if not temp_dir.exists():
+            log_error("Manual BG removal", f"Directory no longer exists: {temp_dir}")
+            messagebox.showerror(
+                "Directory Not Found",
+                f"The directory no longer exists:\n{temp_dir}\n\n"
+                "This can happen if you navigated back after the character was finalized."
+            )
+            return
+
+        temp_path = temp_dir / f"_temp_manual_{expr_key}.png"
+
+        try:
+            temp_path.write_bytes(working_bytes)
+            log_info(f"Wrote temp file for manual BG edit: {temp_path} ({len(working_bytes)} bytes)")
+        except Exception as e:
+            log_error("Manual BG removal", f"Failed to write temp file: {e}")
+            messagebox.showerror("Error", f"Failed to create temp file:\n{e}")
+            return
+
+        # Verify temp file was written
+        if not temp_path.exists():
+            log_error("Manual BG removal", "Temp file doesn't exist after writing")
+            messagebox.showerror("Error", "Failed to create temp file for editing.")
+            return
 
         from ..review_windows import click_to_remove_background
         accepted = click_to_remove_background(temp_path, threshold=30)
 
         if accepted:
-            # Copy result back to expression path
-            edited_bytes = temp_path.read_bytes()
-            path.write_bytes(edited_bytes)
-            # Update cleanup data with edited result (keep original for future Restart, update displayed)
+            # Verify temp file still exists after editor closed
+            if not temp_path.exists():
+                log_error("Manual BG removal", f"Temp file missing after editor closed: {temp_path}")
+                messagebox.showerror(
+                    "Error",
+                    "The edited file could not be found after the editor closed.\n"
+                    "Please try again."
+                )
+                return
+
+            # Read edited bytes from temp file
+            try:
+                edited_bytes = temp_path.read_bytes()
+            except Exception as e:
+                log_error("Manual BG removal", f"Failed to read temp file: {e}")
+                messagebox.showerror("Error", f"Failed to read edited image:\n{e}")
+                return
+
+            # Verify we got valid edited bytes
+            if not edited_bytes or len(edited_bytes) < 100:
+                log_error("Manual BG removal", "Failed to read edited image - bytes empty or too small")
+                messagebox.showerror("Error", "Failed to read edited image from temp file.")
+                return
+
+            # Write to the expression file on disk
+            try:
+                path.write_bytes(edited_bytes)
+                log_info(f"Saved manually edited BG for {outfit_name}/{expr_key} ({len(edited_bytes)} bytes)")
+            except Exception as e:
+                log_error("Manual BG removal", f"Failed to save edited image: {e}")
+                messagebox.showerror("Error", f"Failed to save edited image:\n{e}")
+                return
+
+            # Update cleanup data with edited result (keep original for future Restart, update current display bytes)
             self._expression_cleanup_data[outfit_name][expr_key] = (original_bytes, edited_bytes)
-            # Force refresh the display
-            self._inner_frame.update_idletasks()
-            self._show_outfit_expressions()
-            self._canvas.update_idletasks()
-            self._status_label.configure(text=f"Manual BG removal applied to expression {expr_key}.")
+
+            # Force complete UI refresh - schedule it after the modal fully closes
+            # This ensures the modal window is destroyed before we try to rebuild cards
+            def refresh_display():
+                # Clear and rebuild all expression cards
+                self._show_outfit_expressions()
+                # Force canvas to fully update
+                self._canvas.update()
+                self._inner_frame.update()
+                self._status_label.configure(text=f"Manual BG removal applied to expression {expr_key}.")
+                log_info(f"UI refreshed after manual BG edit for {expr_key}")
+
+            # Use after(50) to let the modal window fully close before refreshing
+            self.wizard.root.after(50, refresh_display)
 
         # Clean up temp file
         if temp_path.exists():
-            temp_path.unlink()
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass  # Ignore cleanup errors
 
     def _on_regenerate_all(self) -> None:
         """Regenerate all expressions."""

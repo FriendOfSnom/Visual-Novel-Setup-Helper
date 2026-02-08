@@ -1,0 +1,9 @@
+default_outfit: suit
+display_name: Abby Luten
+eye_line: 0.08
+name_color: '#6e7771'
+poses:
+  a:
+    facing: right
+scale: 0.9
+voice: woman

@@ -1,0 +1,10 @@
+eye_line: 0.08
+name_color: '#ffbad6'
+poses:
+  a:
+    facing: left
+    excludes:
+      hair:
+        - cheer
+        - cheer_inverted
+scale: 0.9

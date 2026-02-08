@@ -1,0 +1,11 @@
+eye_line: 0.24
+name_color: '#e0966c'
+poses:
+  a:
+    facing: right
+  b:
+    facing: right
+  c:
+    facing: right
+scale: 1.0
+voice: child

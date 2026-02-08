@@ -126,18 +126,21 @@ def get_reference_images_for_archetype(archetype_label: str) -> List[Path]:
     Return all reference sprites for this archetype so Gemini can lock onto the style.
 
     Preference:
-      1) reference_sprites/<archetype_label>/
+      1) reference_sprites/<archetype_folder>/  (e.g., "young_woman" for "Young Woman")
       2) PNGs directly under reference_sprites/
 
     Args:
-        archetype_label: Character archetype (e.g., "young woman").
+        archetype_label: Character archetype (e.g., "Young Woman", "adult man").
 
     Returns:
         List of paths to reference images.
     """
     paths: List[Path] = []
 
-    arch_dir = REF_SPRITES_DIR / archetype_label
+    # Convert archetype label to folder name format: lowercase with underscores
+    # e.g., "Young Woman" -> "young_woman", "adult man" -> "adult_man"
+    folder_name = archetype_label.lower().replace(" ", "_")
+    arch_dir = REF_SPRITES_DIR / folder_name
     if arch_dir.is_dir():
         for p in sorted(arch_dir.iterdir()):
             if p.suffix.lower() in (".png", ".webp", ".jpg", ".jpeg"):

@@ -8,7 +8,7 @@ import random
 import shutil
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import yaml
 from PIL import Image
@@ -432,6 +432,7 @@ def generate_outfits_once(
     archetype_label: str,
     include_base_outfit: bool = True,
     for_interactive_review: bool = False,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> List[Path] | Tuple[List[Path], List[Tuple[bytes, bytes]], Dict[str, str]]:
     """
     Generate outfits for a pose.
@@ -486,7 +487,12 @@ def generate_outfits_once(
             paths.append(base_out_path)
 
     # Generate each selected outfit key
-    for key, desc in outfit_descriptions.items():
+    total_outfits = len(outfit_descriptions)
+    for idx, (key, desc) in enumerate(outfit_descriptions.items()):
+        # Report progress
+        if progress_callback:
+            progress_callback(idx + 1, total_outfits, key)
+
         result = generate_single_outfit(
             api_key,
             base_pose_path,

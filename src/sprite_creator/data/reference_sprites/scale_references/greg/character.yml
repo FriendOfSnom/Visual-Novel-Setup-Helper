@@ -1,0 +1,9 @@
+default_outfit: suit
+display_name: Greg Fisk
+eye_line: 0.12
+name_color: '#81726f'
+poses:
+  a:
+    facing: right
+scale: 1.1
+voice: male

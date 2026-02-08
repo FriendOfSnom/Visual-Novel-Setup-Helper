@@ -1,0 +1,13 @@
+eye_line: 0.26
+mutations:
+  twintails:
+  - gym
+  - school_swimsuit
+name_color: '#f5d4be'
+poses:
+  a:
+    facing: right
+  b:
+    facing: right
+scale: 1.1
+voice: child

@@ -169,6 +169,13 @@ def download_and_setup_sdk(install_dir: Path) -> bool:
     parent_dir = install_dir.parent
     download_path = parent_dir / download_filename
 
+    # Ensure parent directory exists
+    try:
+        parent_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"[ERROR] Could not create SDK parent directory {parent_dir}: {e}")
+        return False
+
     # Check if SDK already exists
     if install_dir.exists():
         print(f"[INFO] SDK already exists at {install_dir}")

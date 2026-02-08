@@ -15,6 +15,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
+from .logging_utils import setup_logging, log_info, log_error, log_exception
+
 
 def main():
     """Main entry point for the standalone launcher."""
@@ -22,6 +24,9 @@ def main():
     from .ui.launcher import LauncherWindow
     from .ui.api_setup import ensure_api_key
     from .config import APP_NAME, APP_VERSION
+
+    # Initialize logging first thing
+    setup_logging()
 
     print(f"\n{'=' * 60}")
     print(f"  {APP_NAME} v{APP_VERSION}")
@@ -95,15 +100,20 @@ def run_sprite_creator():
     try:
         result = run_full_wizard(output_root=output_path, api_key=api_key)
         if result:
+            log_info(f"Character sprite creation complete: {result.display_name}")
             print("\n[INFO] Character sprite creation complete!")
             print(f"[INFO] Character created: {result.display_name}")
             if result.character_folder:
+                log_info(f"Output folder: {result.character_folder}")
                 print(f"[INFO] Output folder: {result.character_folder}")
         else:
+            log_info("Wizard cancelled by user")
             print("[INFO] Wizard cancelled by user.")
     except SystemExit:
+        log_info("Wizard exited via SystemExit")
         print("[INFO] Wizard exited.")
     except Exception as e:
+        log_exception(f"Error in sprite creator wizard: {e}")
         messagebox.showerror("Error", f"An error occurred:\n{e}")
         print(f"[ERROR] {e}")
         import traceback
@@ -148,14 +158,17 @@ def run_expression_sheets():
 
     # Run the generator
     try:
+        log_info(f"Running expression sheet generator on: {folder_path}")
         # Temporarily override sys.argv for the expression sheet main()
         original_argv = sys.argv
         sys.argv = ["expression_sheets", str(folder_path)]
         run_sheet_generator()
         sys.argv = original_argv
+        log_info("Expression sheets generated successfully")
         print("\n[INFO] Expression sheets generated successfully!")
         messagebox.showinfo("Complete", "Expression sheets generated successfully!")
     except Exception as e:
+        log_exception(f"Error in expression sheet generator: {e}")
         messagebox.showerror("Error", f"An error occurred:\n{e}")
         print(f"[ERROR] {e}")
 
@@ -196,16 +209,20 @@ def run_sprite_tester():
 
     # Run the tester
     try:
+        log_info(f"Running sprite tester on: {folder_path}")
         from .tools.tester import launch_sprite_tester
         launch_sprite_tester(folder_path)
+        log_info("Sprite tester finished")
         print("\n[INFO] Sprite tester finished.")
-    except ImportError:
+    except ImportError as e:
+        log_error(f"Sprite tester module not available: {e}")
         messagebox.showerror(
             "Tester Not Available",
             "The sprite tester module is not available.\n"
             "Make sure all dependencies are installed."
         )
     except Exception as e:
+        log_exception(f"Error in sprite tester: {e}")
         messagebox.showerror("Error", f"An error occurred:\n{e}")
         print(f"[ERROR] {e}")
 
@@ -217,9 +234,11 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
+        log_info("Interrupted by user.")
         print("\n[INFO] Interrupted by user.")
         sys.exit(0)
     except Exception as e:
+        log_exception(f"Unhandled exception in main: {e}")
         print(f"\n[ERROR] Unhandled exception: {e}")
         import traceback
         traceback.print_exc()

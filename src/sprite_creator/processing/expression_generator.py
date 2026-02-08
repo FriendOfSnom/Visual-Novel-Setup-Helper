@@ -9,7 +9,7 @@ import random
 import sys
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from PIL import Image
 
@@ -158,6 +158,7 @@ def generate_expressions_for_single_outfit_once(
     edge_cleanup_passes: Optional[int] = None,
     for_interactive_review: bool = False,
     bg_removal_mode: str = "rembg",
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> Union[List[Path], Tuple[List[Path], List[Tuple[bytes, bytes]]]]:
     """
     Generate a full expression set for a single outfit in a single pose.
@@ -232,9 +233,14 @@ def generate_expressions_for_single_outfit_once(
 
     # Generate remaining expressions
     image_b64 = load_image_as_base64(outfit_path)
+    total_expressions = len(expressions_sequence)
 
     for idx, (orig_key, desc) in enumerate(expressions_sequence[1:], start=1):
         out_stem = out_dir / str(idx)
+
+        # Report progress (idx is 1-based after skip neutral)
+        if progress_callback:
+            progress_callback(idx, total_expressions - 1, orig_key)
 
         result = _generate_expression_with_safety_recovery(
             api_key,

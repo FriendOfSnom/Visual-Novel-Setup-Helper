@@ -1,0 +1,9 @@
+eye_line: 0.15
+name_color: '#877197'
+poses:
+  a:
+    center_width: 233
+  b:
+    center_width: 306
+scale: 1.0
+voice: tomboy

@@ -368,8 +368,16 @@ class OptionCard(tk.Frame):
     def _update_appearance(self):
         if self._selected:
             self._set_bg(CARD_BG_SELECTED)
+            # Use white text for better contrast on blue selected background
+            self._title_label.configure(fg=TEXT_COLOR)
+            if self._desc_label:
+                self._desc_label.configure(fg=TEXT_COLOR)  # White instead of grey
         else:
             self._set_bg(CARD_BG)
+            # Reset to normal colors
+            self._title_label.configure(fg=TEXT_COLOR)
+            if self._desc_label:
+                self._desc_label.configure(fg=TEXT_SECONDARY)
 
     @property
     def selected(self) -> bool:
@@ -422,41 +430,69 @@ def create_help_button(
     parent: tk.Widget,
     help_title: str,
     help_text: str,
-) -> tk.Button:
+    prominent: bool = False,
+) -> tk.Frame:
     """
-    Create a small "?" help button that shows a modal with instructions.
+    Create a help button that shows a modal with instructions.
 
     Args:
         parent: Parent widget
         help_title: Title for the help modal
         help_text: Help content to display
+        prominent: If True, shows larger button with "Help" label
 
     Returns:
-        Configured help button
+        Frame containing the help button (and label if prominent)
     """
     def show_help():
         show_help_modal(parent, help_title, help_text)
 
-    btn = tk.Button(
-        parent,
-        text="?",
-        command=show_help,
-        width=2,
-        height=1,
-        bg=SECONDARY_COLOR,
-        fg=TEXT_COLOR,
-        activebackground=SECONDARY_HOVER,
-        activeforeground=TEXT_COLOR,
-        font=(FONT_FAMILY, 10, "bold"),
-        relief="flat",
-        cursor="hand2",
-        bd=0,
-    )
+    # Container frame
+    frame = tk.Frame(parent, bg=parent.cget("bg") if hasattr(parent, "cget") else BG_COLOR)
 
-    btn.bind("<Enter>", lambda e: btn.configure(bg=SECONDARY_HOVER))
-    btn.bind("<Leave>", lambda e: btn.configure(bg=SECONDARY_COLOR))
+    if prominent:
+        # Prominent style: larger button with "Need help?" label
+        btn = tk.Button(
+            frame,
+            text="? Help",
+            command=show_help,
+            width=8,
+            bg=ACCENT_COLOR,
+            fg=TEXT_COLOR,
+            activebackground=ACCENT_HOVER,
+            activeforeground=TEXT_COLOR,
+            font=(FONT_FAMILY, 11, "bold"),
+            relief="flat",
+            cursor="hand2",
+            bd=0,
+            padx=8,
+            pady=4,
+        )
+        btn.bind("<Enter>", lambda e: btn.configure(bg=ACCENT_HOVER))
+        btn.bind("<Leave>", lambda e: btn.configure(bg=ACCENT_COLOR))
+        btn.pack(side="right")
+    else:
+        # Standard style: small "?" button
+        btn = tk.Button(
+            frame,
+            text="?",
+            command=show_help,
+            width=2,
+            height=1,
+            bg=SECONDARY_COLOR,
+            fg=TEXT_COLOR,
+            activebackground=SECONDARY_HOVER,
+            activeforeground=TEXT_COLOR,
+            font=(FONT_FAMILY, 10, "bold"),
+            relief="flat",
+            cursor="hand2",
+            bd=0,
+        )
+        btn.bind("<Enter>", lambda e: btn.configure(bg=SECONDARY_HOVER))
+        btn.bind("<Leave>", lambda e: btn.configure(bg=SECONDARY_COLOR))
+        btn.pack(side="right")
 
-    return btn
+    return frame
 
 
 def show_help_modal(parent: tk.Widget, title: str, help_text: str) -> None:
@@ -573,6 +609,214 @@ def show_help_modal(parent: tk.Widget, title: str, help_text: str) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ERROR DIALOG WITH COPY SUPPORT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def show_error_dialog(
+    parent: tk.Widget,
+    title: str,
+    message: str,
+) -> None:
+    """
+    Show an error dialog with copyable text.
+
+    Unlike messagebox.showerror(), this dialog allows users to select and copy
+    the error message for sharing/debugging.
+
+    Args:
+        parent: Parent widget (used to find root window)
+        title: Dialog title
+        message: Error message to display
+    """
+    # Find root window
+    root = parent.winfo_toplevel()
+
+    # Create dialog
+    dialog = tk.Toplevel(root)
+    dialog.title(title)
+    dialog.configure(bg=BG_COLOR)
+    dialog.transient(root)
+    dialog.grab_set()
+
+    # Size and center
+    dialog_w, dialog_h = 450, 280
+    root_x = root.winfo_x()
+    root_y = root.winfo_y()
+    root_w = root.winfo_width()
+    root_h = root.winfo_height()
+    x = root_x + (root_w - dialog_w) // 2
+    y = root_y + (root_h - dialog_h) // 2
+    dialog.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
+    dialog.resizable(False, False)
+
+    # Content frame
+    content = tk.Frame(dialog, bg=BG_COLOR, padx=24, pady=20)
+    content.pack(fill="both", expand=True)
+
+    # Error icon and title row
+    header_frame = tk.Frame(content, bg=BG_COLOR)
+    header_frame.pack(fill="x", pady=(0, 12))
+
+    error_icon = tk.Label(
+        header_frame,
+        text="❌",
+        bg=BG_COLOR,
+        fg=DANGER_COLOR,
+        font=(FONT_FAMILY, 20),
+    )
+    error_icon.pack(side="left", padx=(0, 12))
+
+    title_label = tk.Label(
+        header_frame,
+        text=title,
+        bg=BG_COLOR,
+        fg=TEXT_COLOR,
+        font=SECTION_FONT,
+    )
+    title_label.pack(side="left")
+
+    # Message text (selectable)
+    text_frame = tk.Frame(content, bg=CARD_BG, padx=2, pady=2)
+    text_frame.pack(fill="both", expand=True, pady=(0, 16))
+
+    text_widget = tk.Text(
+        text_frame,
+        wrap="word",
+        bg=CARD_BG,
+        fg=TEXT_COLOR,
+        font=BODY_FONT,
+        relief="flat",
+        highlightthickness=0,
+        padx=8,
+        pady=8,
+        cursor="arrow",
+    )
+    text_widget.insert("1.0", message)
+    text_widget.configure(state="disabled")  # Read-only but still selectable
+    text_widget.pack(fill="both", expand=True)
+
+    # Enable text selection
+    def enable_selection(event=None):
+        text_widget.configure(state="normal")
+        text_widget.configure(cursor="xterm")
+
+    def disable_selection(event=None):
+        text_widget.configure(state="disabled")
+        text_widget.configure(cursor="arrow")
+
+    text_widget.bind("<Button-1>", enable_selection)
+    text_widget.bind("<FocusOut>", disable_selection)
+
+    # Button row
+    btn_frame = tk.Frame(content, bg=BG_COLOR)
+    btn_frame.pack(fill="x")
+
+    def copy_to_clipboard():
+        dialog.clipboard_clear()
+        dialog.clipboard_append(message)
+        dialog.update()  # Required for clipboard to work
+        # Brief visual feedback
+        copy_btn.configure(text="Copied!")
+        dialog.after(1500, lambda: copy_btn.configure(text="Copy to Clipboard"))
+
+    copy_btn = create_secondary_button(
+        btn_frame,
+        "Copy to Clipboard",
+        copy_to_clipboard,
+        width=16,
+    )
+    copy_btn.pack(side="left")
+
+    ok_btn = create_primary_button(
+        btn_frame,
+        "OK",
+        dialog.destroy,
+        width=10,
+    )
+    ok_btn.pack(side="right")
+
+    # Escape to close
+    dialog.bind("<Escape>", lambda e: dialog.destroy())
+    dialog.bind("<Return>", lambda e: dialog.destroy())
+
+    # Focus dialog
+    dialog.focus_set()
+
+    # Wait for dialog to close (blocking like messagebox)
+    dialog.wait_window()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INLINE TIPS / WARNINGS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Tip box colors
+TIP_BG = "#2D4A5E"  # Blue-grey for info tips
+TIP_BORDER = "#4A90D9"  # Blue border
+WARNING_BG = "#5E4A2D"  # Orange-brown for warnings
+WARNING_BORDER = "#D9904A"  # Orange border
+
+
+def create_tip_box(
+    parent: tk.Widget,
+    text: str,
+    tip_type: str = "info",
+) -> tk.Frame:
+    """
+    Create an inline tip/info box that displays directly on the screen.
+
+    Args:
+        parent: Parent widget
+        text: Tip text to display
+        tip_type: "info" (blue) or "warning" (orange)
+
+    Returns:
+        Frame containing the tip box
+    """
+    if tip_type == "warning":
+        bg_color = WARNING_BG
+        border_color = WARNING_BORDER
+        icon = "⚠"
+    else:  # info
+        bg_color = TIP_BG
+        border_color = TIP_BORDER
+        icon = "💡"
+
+    # Outer frame for border effect
+    outer = tk.Frame(parent, bg=border_color, padx=2, pady=2)
+
+    # Inner frame for content
+    inner = tk.Frame(outer, bg=bg_color, padx=12, pady=8)
+    inner.pack(fill="both", expand=True)
+
+    # Icon and text
+    content_frame = tk.Frame(inner, bg=bg_color)
+    content_frame.pack(fill="x")
+
+    icon_label = tk.Label(
+        content_frame,
+        text=icon,
+        bg=bg_color,
+        fg=TEXT_COLOR,
+        font=(FONT_FAMILY, 12),
+    )
+    icon_label.pack(side="left", padx=(0, 8))
+
+    text_label = tk.Label(
+        content_frame,
+        text=text,
+        bg=bg_color,
+        fg=TEXT_COLOR,
+        font=SMALL_FONT,
+        justify="left",
+        wraplength=500,
+    )
+    text_label.pack(side="left", fill="x", expand=True)
+
+    return outer
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # UTILITY FUNCTIONS (preserved from original)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -668,6 +912,10 @@ __all__ = [
     # Help system
     "create_help_button",
     "show_help_modal",
+    # Error dialog
+    "show_error_dialog",
+    # Inline tips
+    "create_tip_box",
     # Utilities
     "compute_display_size",
     "center_and_clamp",

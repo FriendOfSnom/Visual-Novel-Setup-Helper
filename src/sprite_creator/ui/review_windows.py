@@ -999,7 +999,10 @@ def click_to_remove_background(image_path: Path, threshold: int = 30) -> bool:
     tk.Button(btns, text="Cancel", width=16, command=on_cancel).pack(side=tk.LEFT, padx=10)
 
     center_and_clamp(root)
-    root.mainloop()
+
+    # Use wait_window() for Toplevel to properly block until window closes
+    # mainloop() doesn't block for Toplevel when a mainloop is already running
+    root.wait_window()
 
     return accepted["value"]
 

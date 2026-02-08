@@ -6,6 +6,7 @@ replacing the CLI-based interactive setup.
 """
 
 import json
+import threading
 import tkinter as tk
 from tkinter import ttk
 import webbrowser
@@ -37,22 +38,48 @@ from .tk_common import (
 
 API_SETUP_HELP_TEXT = """Getting Your Gemini API Key
 
-1. Click "Open Google AI Studio" to go to the API key page
-2. Sign in with your Google account
-3. Click "Create API Key" if you don't have one
-4. Copy the key and paste it here
-5. Click "Verify & Save" to test it
+IMPORTANT: You need a Google Cloud account with credits!
+The basic free tier from AI Studio does NOT have enough quota for sprite generation. You need to set up Google Cloud to get $300 in free credits.
 
-Free Credits for New Accounts:
-New Google Cloud accounts receive approximately $300 in free credits that can be used for Gemini API calls. This is usually more than enough for creating many character sprites.
+Step-by-Step Setup:
 
-Tip: When your credits run low, you can create a new Google account to get fresh credits.
+1. Go to console.cloud.google.com
+2. Sign in or create a Google account
+3. New accounts automatically get $300 in free trial credits
+4. Create a new project (or use default)
+5. Search for "Generative Language API" and enable it
+6. Go to "APIs & Services" > "Credentials"
+7. Click "Create Credentials" > "API Key"
+8. Copy the key and paste it here
+
+Why Google Cloud Instead of AI Studio?
+- AI Studio's free tier has very strict rate limits
+- Sprite generation requires many API calls
+- The $300 Cloud credits provide much higher limits
+- One character with multiple outfits = 50+ API calls
+
+TROUBLESHOOTING
+
+"API key changed but still getting errors"
+If you have a GEMINI_API_KEY environment variable set, it takes precedence over the saved config. Check your system/user environment variables and remove it, then restart the app.
+
+"Invalid API key" error:
+The key may have been deleted or restricted. Generate a new one from Google Cloud Console.
+
+"Quota exceeded" or "429" errors:
+You've hit rate limits. Wait a few minutes, or if using AI Studio free tier, switch to Google Cloud as described above.
+
+"Safety filter" errors:
+The AI refused to generate certain content. Try different prompts or descriptions.
+
+"403 Forbidden" error:
+The API is not enabled for your project, or the key is restricted. Enable "Generative Language API" in Google Cloud Console.
 
 API Key Security:
-Your API key is stored locally in your home directory and is only used to communicate with Google's servers. It is never shared with anyone else.
+Your key is stored locally (~/.st_gemini_config.json) and only used to communicate with Google. Never shared.
 
-Already Have a Key?
-If you've previously saved an API key, it will be shown in the input field (masked). You can replace it with a new key at any time."""
+When Credits Run Low:
+Create a new Google account to get fresh $300 credits."""
 
 
 class APISetupWindow:
@@ -69,11 +96,12 @@ class APISetupWindow:
             parent: Optional parent window. If provided, opens as Toplevel dialog.
         """
         self._is_toplevel = parent is not None
+        self._parent = parent
 
         if self._is_toplevel:
             self.root = tk.Toplevel(parent)
             self.root.transient(parent)  # Stay on top of parent
-            self.root.grab_set()  # Make modal
+            # Note: grab_set() is called later after window is fully configured
         else:
             self.root = tk.Tk()
 
@@ -89,7 +117,7 @@ class APISetupWindow:
 
         self._build_ui()
 
-        # Center on parent if toplevel
+        # Center on parent if toplevel and set up modal behavior
         if self._is_toplevel and parent:
             self.root.update_idletasks()
             # Center the dialog on the parent window
@@ -102,6 +130,22 @@ class APISetupWindow:
             x = px + (pw - w) // 2
             y = py + (ph - h) // 2
             self.root.geometry(f"+{x}+{y}")
+
+            # Lift window above parent
+            self.root.lift()
+
+            # Defer modal setup slightly to ensure window is fully mapped
+            # This fixes event processing issues on some systems
+            def setup_modal():
+                try:
+                    if self.root.winfo_exists():
+                        self.root.focus_force()
+                        self.root.grab_set()
+                        self._key_entry.focus_set()
+                except tk.TclError:
+                    pass  # Window was closed
+
+            self.root.after(50, setup_modal)
 
     def _build_ui(self):
         """Build the API setup UI."""
@@ -125,10 +169,39 @@ class APISetupWindow:
         help_btn = create_help_button(header_frame, "API Key Help", API_SETUP_HELP_TEXT)
         help_btn.pack(side="right")
 
+        # Check for environment variable override
+        import os
+        env_key = os.environ.get("GEMINI_API_KEY")
+        if env_key:
+            # Show warning that env var takes precedence
+            warning_frame = tk.Frame(main_frame, bg="#5E4A2D", padx=12, pady=8)
+            warning_frame.pack(fill="x", pady=(0, 12))
+
+            tk.Label(
+                warning_frame,
+                text="⚠️ Environment Variable Detected",
+                bg="#5E4A2D",
+                fg="#FFB347",
+                font=SECTION_FONT,
+            ).pack(anchor="w")
+
+            tk.Label(
+                warning_frame,
+                text="The GEMINI_API_KEY environment variable is set.\n"
+                     "This takes precedence over any key saved here.\n"
+                     "To use a different key, unset the environment variable first.",
+                bg="#5E4A2D",
+                fg=TEXT_COLOR,
+                font=SMALL_FONT,
+                justify="left",
+                wraplength=380,
+            ).pack(anchor="w", pady=(4, 0))
+
         # Description
         desc_text = (
-            "To generate character sprites, you need a Google Gemini API key.\n"
-            "This is free for new accounts with ~$300 in credits."
+            "You need a Google Cloud API key (not AI Studio free tier).\n"
+            "New Google Cloud accounts get $300 in free credits.\n"
+            "Click the ? button for setup instructions."
         )
         desc_label = tk.Label(
             main_frame,
@@ -217,8 +290,8 @@ class APISetupWindow:
 
         # Tip text
         tip_text = (
-            "Tip: When your credits run low, create a new Google account\n"
-            "to get fresh free credits."
+            "Tip: When your $300 credits run low, create a new Google\n"
+            "account to get fresh credits. See ? for full instructions."
         )
         tip_label = tk.Label(
             main_frame,
@@ -253,8 +326,10 @@ class APISetupWindow:
         # Bind Enter key
         self._key_entry.bind("<Return>", lambda e: self._on_verify_and_save())
 
-        # Focus the entry
-        self._key_entry.focus_set()
+        # Focus will be set after window is fully configured (in __init__ for Toplevel,
+        # or immediately for standalone Tk)
+        if not self._is_toplevel:
+            self._key_entry.focus_set()
 
     def _toggle_key_visibility(self):
         """Toggle API key visibility."""
@@ -329,10 +404,24 @@ class APISetupWindow:
         self._is_validating = True
         self._set_status("Validating API key...", TEXT_SECONDARY)
         self._save_btn.configure(state="disabled")
-        self.root.update()
 
-        # Validate
-        success, message = self._validate_api_key(api_key)
+        # Run validation in background thread to keep UI responsive
+        def validate_in_thread():
+            success, message = self._validate_api_key(api_key)
+            # Schedule callback on main thread
+            self.root.after(0, lambda: self._on_validation_complete(api_key, success, message))
+
+        thread = threading.Thread(target=validate_in_thread, daemon=True)
+        thread.start()
+
+    def _on_validation_complete(self, api_key: str, success: bool, message: str):
+        """Handle validation completion (called on main thread)."""
+        # Check if window still exists (user might have closed it)
+        try:
+            if not self.root.winfo_exists():
+                return
+        except tk.TclError:
+            return
 
         self._is_validating = False
         self._save_btn.configure(state="normal")

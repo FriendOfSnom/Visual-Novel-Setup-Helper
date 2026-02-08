@@ -54,6 +54,12 @@ TEMPLATES_DIR = get_resource_path("tools/tester/templates")
 # Writable paths (for SDK and test project)
 WRITABLE_BASE = _get_writable_base()
 
+# Ensure writable base directory exists for frozen app
+try:
+    WRITABLE_BASE.mkdir(parents=True, exist_ok=True)
+except Exception as e:
+    print(f"[WARN] Could not create writable base directory {WRITABLE_BASE}: {e}")
+
 # Ren'Py SDK location - check environment variable first, then default
 SDK_DIR = Path(os.environ.get("RENPY_SDK_PATH", WRITABLE_BASE / SDK_FOLDER_NAME))
 
@@ -607,11 +613,17 @@ def create_test_project(char_dir: Path) -> Path | None:
     char_yml = char_dir / "character.yml"
     if not char_yml.exists():
         print(f"[ERROR] No character.yml found in {char_dir}")
+        messagebox.showerror("Error", f"No character.yml found in:\n{char_dir}")
         return None
 
     # Load character data
-    with open(char_yml, 'r', encoding='utf-8') as f:
-        char_data = yaml.safe_load(f)
+    try:
+        with open(char_yml, 'r', encoding='utf-8') as f:
+            char_data = yaml.safe_load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to read character.yml: {e}")
+        messagebox.showerror("Error", f"Failed to read character.yml:\n{e}")
+        return None
 
     char_name = char_dir.name
 
@@ -620,15 +632,24 @@ def create_test_project(char_dir: Path) -> Path | None:
     images_dir = game_dir / "images" / "characters"
 
     # Clean and recreate
-    if TEST_PROJECT_DIR.exists():
-        shutil.rmtree(TEST_PROJECT_DIR)
-
-    images_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if TEST_PROJECT_DIR.exists():
+            shutil.rmtree(TEST_PROJECT_DIR)
+        images_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"[ERROR] Failed to create test project directory: {e}")
+        messagebox.showerror("Error", f"Failed to create test project directory:\n{TEST_PROJECT_DIR}\n\n{e}")
+        return None
 
     # Copy template files
     template_files = get_template_files()
     if not template_files:
-        print("[ERROR] No template files found in renpy_scaffolder/templates/")
+        print(f"[ERROR] No template files found in {TEMPLATES_DIR}")
+        messagebox.showerror(
+            "Missing Templates",
+            f"Required template files not found in:\n{TEMPLATES_DIR}\n\n"
+            "Please ensure the sprite creator is properly installed."
+        )
         return None
 
     for filename, src_path in template_files:
@@ -733,6 +754,18 @@ def launch_sprite_tester(char_dir: Path) -> bool:
                 renpy_exe = find_renpy_executable()
             else:
                 print("[ERROR] SDK download failed")
+                # Show error dialog
+                root = tk.Tk()
+                root.withdraw()
+                messagebox.showerror(
+                    "SDK Download Failed",
+                    f"Failed to download Ren'Py SDK.\n\n"
+                    f"Please check your internet connection and try again.\n\n"
+                    f"You can also manually download the SDK from:\n"
+                    f"https://www.renpy.org/latest.html\n\n"
+                    f"And set the RENPY_SDK_PATH environment variable to point to it."
+                )
+                root.destroy()
                 return False
         else:
             print("[INFO] SDK download declined, skipping sprite test")

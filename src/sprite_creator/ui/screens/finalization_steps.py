@@ -8,6 +8,7 @@ These steps handle final character configuration:
 """
 
 import os
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
@@ -31,8 +32,10 @@ from ...config import (
 from ..tk_common import (
     create_primary_button,
     create_secondary_button,
+    show_error_dialog,
 )
 from .base import WizardStep, WizardState
+from ...logging_utils import log_info, log_error
 
 
 # Line color for guides
@@ -419,6 +422,7 @@ Click Next when the scale looks right."""
         self._ref_canvas: Optional[tk.Canvas] = None
         self._user_canvas: Optional[tk.Canvas] = None
         self._scale_var: Optional[tk.DoubleVar] = None
+        self._apply_scale_var: Optional[tk.BooleanVar] = None
         self._ref_var: Optional[tk.StringVar] = None
         self._references: Dict[str, dict] = {}
         self._user_img: Optional[Image.Image] = None
@@ -549,6 +553,32 @@ Click Next when the scale looks right."""
         )
         self._scale_label.pack(side="left", padx=(8, 0))
 
+        # Apply scale to images checkbox - DEFAULT TO TRUE (scaling on by default)
+        self._apply_scale_var = tk.BooleanVar(value=True)
+        apply_frame = tk.Frame(parent, bg=CARD_BG, padx=12, pady=8)
+        apply_frame.pack(fill="x", pady=(12, 8))
+
+        self._apply_scale_checkbox = tk.Checkbutton(
+            apply_frame,
+            text="✓ Scale images to match (recommended - reduces file size)",
+            variable=self._apply_scale_var,
+            bg=CARD_BG,
+            fg=TEXT_COLOR,
+            activebackground=CARD_BG,
+            activeforeground=TEXT_COLOR,
+            selectcolor="#1E1E1E",
+            font=BODY_FONT,
+        )
+        self._apply_scale_checkbox.pack(side="left")
+
+        tk.Label(
+            apply_frame,
+            text="(LANCZOS resampling)",
+            bg=CARD_BG,
+            fg=TEXT_SECONDARY,
+            font=SMALL_FONT,
+        ).pack(side="left", padx=(8, 0))
+
     def on_enter(self) -> None:
         """Load references and user image when step becomes active."""
         # Load reference sprites
@@ -565,7 +595,9 @@ Click Next when the scale looks right."""
         menu.delete(0, "end")
         names = sorted(self._references.keys())
         if names:
-            self._ref_var.set(names[0])
+            # Default to "john" if available, otherwise first alphabetically
+            default_name = "john" if "john" in names else names[0]
+            self._ref_var.set(default_name)
             for name in names:
                 menu.add_command(label=name, command=lambda n=name: self._on_ref_change(n))
 
@@ -581,6 +613,10 @@ Click Next when the scale looks right."""
         if self.state.scale_factor:
             self._scale_var.set(self.state.scale_factor)
 
+        # Restore apply scale checkbox
+        if self._apply_scale_var:
+            self._apply_scale_var.set(self.state.apply_scale_to_images)
+
         # Update canvas sizes based on screen (larger for better accuracy)
         parent = self._ref_canvas.winfo_toplevel()
         sw = parent.winfo_screenwidth()
@@ -595,19 +631,34 @@ Click Next when the scale looks right."""
         self._redraw()
 
     def _load_references(self) -> None:
-        """Load reference sprites from directory."""
+        """Load reference sprites from scale_references subdirectory.
+
+        Structure: reference_sprites/scale_references/<character_name>/
+                     - <character_name>.png (the sprite image)
+                     - character.yml (with scale, eye_line, etc.)
+        """
         self._references = {}
 
-        if not REF_SPRITES_DIR.is_dir():
+        scale_refs_dir = REF_SPRITES_DIR / "scale_references"
+        if not scale_refs_dir.is_dir():
             return
 
-        for fn in os.listdir(REF_SPRITES_DIR):
-            if not fn.lower().endswith(".png"):
+        for char_dir in scale_refs_dir.iterdir():
+            if not char_dir.is_dir():
                 continue
 
-            name = os.path.splitext(fn)[0]
-            img_path = REF_SPRITES_DIR / fn
-            yml_path = REF_SPRITES_DIR / (name + ".yml")
+            name = char_dir.name
+            # Look for <name>.png in the character folder
+            img_path = char_dir / f"{name}.png"
+            yml_path = char_dir / "character.yml"
+
+            # If no matching image, try to find any png
+            if not img_path.exists():
+                pngs = list(char_dir.glob("*.png"))
+                if pngs:
+                    img_path = pngs[0]
+                else:
+                    continue
 
             ref_scale = 1.0
             if yml_path.exists():
@@ -684,19 +735,30 @@ Click Next when the scale looks right."""
                 image=self._img_refs["usr"]
             )
 
-            # Draw eye line if available
+            # Draw eye line across BOTH canvases if available
+            # This helps compare eye levels between reference and user character
             if self.state.eye_line_ratio is not None:
                 img_top = self._canv_h - u_disp_h
                 y_inside = int(u_disp_h * self.state.eye_line_ratio)
                 y_canvas = img_top + y_inside
+                # Draw on user canvas (right)
                 self._user_canvas.create_line(
+                    0, y_canvas, self._canv_w, y_canvas,
+                    fill=LINE_COLOR, width=2
+                )
+                # Draw on reference canvas (left) at same Y for comparison
+                self._ref_canvas.create_line(
                     0, y_canvas, self._canv_w, y_canvas,
                     fill=LINE_COLOR, width=2
                 )
 
     def validate(self) -> bool:
         """Save scale and validate."""
-        self.state.scale_factor = float(self._scale_var.get())
+        scale_val = float(self._scale_var.get())
+        apply_val = bool(self._apply_scale_var.get())
+        log_info(f"ScaleStep.validate(): scale_factor={scale_val}, apply_scale_to_images={apply_val}")
+        self.state.scale_factor = scale_val
+        self.state.apply_scale_to_images = apply_val
         return True
 
 
@@ -753,6 +815,7 @@ Click Finish to close the wizard."""
         super().__init__(wizard, state)
         self._summary_frame: Optional[tk.Frame] = None
         self._actions_frame: Optional[tk.Frame] = None
+        self._finalized = False  # Track if finalization has already run
 
     def build_ui(self, parent: tk.Frame) -> None:
         parent.configure(bg=BG_COLOR)
@@ -871,6 +934,14 @@ Click Finish to close the wizard."""
             "Open Output Folder",
             self._open_output_folder,
             width=20,
+        ).pack(pady=(0, 16))
+
+        # Finish button - opens folder and closes app
+        create_primary_button(
+            self._actions_frame,
+            "Finish",
+            self._on_finish,
+            width=20,
         ).pack(pady=(0, 8))
 
     def _add_row(self, label: str, value: str) -> None:
@@ -943,7 +1014,7 @@ Click Finish to close the wizard."""
             from ...tools.tester import launch_sprite_tester
             launch_sprite_tester(self.state.character_folder)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to launch sprite tester:\n{e}")
+            show_error_dialog(self.parent, "Error", f"Failed to launch sprite tester:\n{e}")
 
     def _open_output_folder(self) -> None:
         """Open the character output folder in the file explorer."""
@@ -953,7 +1024,7 @@ Click Finish to close the wizard."""
 
         folder_path = self.state.character_folder
         if not folder_path.exists():
-            messagebox.showerror("Error", f"Folder not found:\n{folder_path}")
+            show_error_dialog(self.parent, "Error", f"Folder not found:\n{folder_path}")
             return
 
         try:
@@ -967,12 +1038,108 @@ Click Finish to close the wizard."""
             else:  # Linux
                 subprocess.run(["xdg-open", str(folder_path)], check=False)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to open folder:\n{e}")
+            show_error_dialog(self.parent, "Error", f"Failed to open folder:\n{e}")
+
+    def _on_finish(self) -> None:
+        """Open the output folder and close the application."""
+        # Open the folder first
+        self._open_output_folder()
+
+        # Close the application
+        try:
+            # Get the root window and destroy it
+            root = self.parent.winfo_toplevel()
+            root.quit()
+            root.destroy()
+        except Exception:
+            # Fallback: just exit
+            sys.exit(0)
+
+    def _apply_scale_to_images(self, char_dir: Path, pose_letters: list, scale: float) -> int:
+        """
+        Scale down all outfit and face images using LANCZOS resampling.
+
+        Args:
+            char_dir: Character directory
+            pose_letters: List of pose letters (a, b, c, etc.)
+            scale: Scale factor (e.g., 0.8 = 80% of original size)
+
+        Returns:
+            Number of images scaled
+        """
+        scaled_count = 0
+        log_info(f"_apply_scale_to_images: char_dir={char_dir}, pose_letters={pose_letters}, scale={scale}")
+
+        for pose_letter in pose_letters:
+            pose_dir = char_dir / pose_letter
+            log_info(f"  Processing pose '{pose_letter}': {pose_dir}")
+
+            # Scale outfits
+            outfits_dir = pose_dir / "outfits"
+            if outfits_dir.exists():
+                outfit_files = [f for f in outfits_dir.iterdir() if f.suffix.lower() in ('.png', '.webp')]
+                log_info(f"    Found {len(outfit_files)} outfit images in {outfits_dir}")
+                for img_file in outfit_files:
+                    if self._scale_image_file(img_file, scale):
+                        scaled_count += 1
+            else:
+                log_info(f"    No outfits dir: {outfits_dir}")
+
+            # Scale faces
+            faces_dir = pose_dir / "faces"
+            if faces_dir.exists():
+                for face_subdir in faces_dir.iterdir():
+                    if face_subdir.is_dir():
+                        face_files = [f for f in face_subdir.iterdir() if f.suffix.lower() in ('.png', '.webp')]
+                        log_info(f"    Found {len(face_files)} face images in {face_subdir}")
+                        for img_file in face_files:
+                            if self._scale_image_file(img_file, scale):
+                                scaled_count += 1
+            else:
+                log_info(f"    No faces dir: {faces_dir}")
+
+        return scaled_count
+
+    def _scale_image_file(self, img_path: Path, scale: float) -> bool:
+        """
+        Scale a single image file using LANCZOS resampling.
+
+        Args:
+            img_path: Path to image file
+            scale: Scale factor
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            img = Image.open(img_path).convert("RGBA")
+            new_w = int(img.width * scale)
+            new_h = int(img.height * scale)
+
+            # Use LANCZOS for highest quality downscaling
+            scaled_img = img.resize((new_w, new_h), Image.LANCZOS)
+
+            # Save in original format
+            if img_path.suffix.lower() == '.webp':
+                scaled_img.save(img_path, format="WEBP", quality=95, method=6)
+            else:
+                scaled_img.save(img_path, format="PNG", compress_level=6, optimize=True)
+
+            log_info(f"Scaled: {img_path.name} ({img.width}x{img.height} -> {new_w}x{new_h})")
+            return True
+        except Exception as e:
+            log_error("Image scaling", f"Failed to scale {img_path.name}: {e}")
+            return False
 
     def _finalize_character(self) -> None:
         """Finalize character: create character.yml and expression sheets."""
         from ...processing.pose_processor import flatten_pose_outfits_to_letter_poses, write_character_yml
         from ...processing import generate_expression_sheets_for_root
+
+        # Skip if already finalized (user went back and came forward again)
+        if self._finalized:
+            log_info("Skipping finalization - already completed")
+            return
 
         if not self.state.character_folder:
             return
@@ -993,6 +1160,24 @@ Click Finish to close the wizard."""
                     ]
                 )
 
+            # Apply scale to images if enabled (only scale DOWN, not up)
+            final_scale = self.state.scale_factor or 1.0
+            log_info(f"Scale check: apply_scale_to_images={self.state.apply_scale_to_images}, scale_factor={final_scale}")
+
+            if self.state.apply_scale_to_images and final_scale < 1.0:
+                log_info(f"Applying scale {final_scale} to all images (LANCZOS resampling)...")
+                print(f"[INFO] Applying scale {final_scale} to all images (LANCZOS resampling)...")
+                scaled_count = self._apply_scale_to_images(char_dir, final_pose_letters, final_scale)
+                log_info(f"Scaled {scaled_count} images successfully")
+                print(f"[INFO] Scaled {scaled_count} images")
+                # After scaling, the images are at their final size, so scale becomes 1.0
+                final_scale = 1.0
+            else:
+                if not self.state.apply_scale_to_images:
+                    log_info("Skipping image scaling: checkbox not checked")
+                elif final_scale >= 1.0:
+                    log_info(f"Skipping image scaling: scale={final_scale} is >= 1.0 (only scale down)")
+
             # Build poses yaml
             poses_yaml = {letter: {"facing": "right"} for letter in final_pose_letters}
 
@@ -1004,15 +1189,19 @@ Click Finish to close the wizard."""
                 self.state.voice,
                 self.state.eye_line_ratio or 0.3,
                 self.state.name_color or "#915f40",
-                self.state.scale_factor or 1.0,
+                final_scale,
                 poses_yaml,
                 game=None,
             )
             print(f"[INFO] Created character.yml for {self.state.display_name}")
 
-            # Generate expression sheets
+            # Generate expression sheets (will use scaled images if scaling was applied)
             generate_expression_sheets_for_root(char_dir)
             print(f"[INFO] Generated expression sheets for {self.state.display_name}")
+
+            # Mark as finalized so we don't re-run if user goes back and forward
+            self._finalized = True
+            log_info("Finalization completed successfully")
 
         except Exception as e:
             print(f"[ERROR] Finalization error: {e}")

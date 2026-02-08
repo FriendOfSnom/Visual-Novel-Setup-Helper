@@ -1,0 +1,8 @@
+default_outfit: suit
+display_name: Connie Williams
+name_color: '#915f40'
+poses:
+  a:
+    facing: right
+scale: 0.9
+voice: woman

@@ -81,6 +81,7 @@ class WizardState:
     eye_line_ratio: Optional[float] = None
     name_color: Optional[str] = None
     scale_factor: float = 1.0
+    apply_scale_to_images: bool = True  # If True, resize all images and set scale to 1.0 (default: ON)
 
     # === Output ===
     output_root: Optional[Path] = None

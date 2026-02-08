@@ -36,8 +36,169 @@ from ..tk_common import (
     create_primary_button,
     create_secondary_button,
     create_danger_button,
+    show_error_dialog,
 )
 from .base import WizardStep, WizardState
+from ...logging_utils import log_info, log_error, log_generation_start, log_generation_complete
+
+
+class CustomRegenModal:
+    """
+    Modal dialog for entering a custom outfit description for regeneration.
+    """
+
+    def __init__(self, parent: tk.Tk, outfit_name: str, on_generate: callable):
+        """
+        Initialize the custom regen modal.
+
+        Args:
+            parent: Parent window
+            outfit_name: Name of the outfit being regenerated (for title)
+            on_generate: Callback with signature (prompt: str) -> None
+        """
+        self._parent = parent
+        self._on_generate = on_generate
+        self._result_prompt: Optional[str] = None
+
+        # Create modal window
+        self.window = tk.Toplevel(parent)
+        self.window.title(f"Custom {outfit_name.capitalize()} Outfit")
+        self.window.transient(parent)
+        self.window.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+        # Configure window
+        self.window.configure(bg=BG_COLOR)
+        self.window.geometry("450x340")  # Taller to ensure buttons are visible
+        self.window.resizable(False, False)
+
+        self._build_ui(outfit_name)
+
+        # Center on parent
+        self.window.update_idletasks()
+        px = parent.winfo_x()
+        py = parent.winfo_y()
+        pw = parent.winfo_width()
+        ph = parent.winfo_height()
+        w = self.window.winfo_width()
+        h = self.window.winfo_height()
+        x = px + (pw - w) // 2
+        y = py + (ph - h) // 2
+        self.window.geometry(f"+{x}+{y}")
+
+        # Make modal
+        self.window.lift()
+        self.window.focus_force()
+        self.window.grab_set()
+
+        # Focus text area
+        self._text_area.focus_set()
+
+    def _build_ui(self, outfit_name: str) -> None:
+        """Build the modal UI."""
+        main_frame = tk.Frame(self.window, bg=BG_COLOR, padx=20, pady=16)
+        main_frame.pack(fill="both", expand=True)
+
+        # Title
+        tk.Label(
+            main_frame,
+            text=f"Describe the {outfit_name} outfit:",
+            bg=BG_COLOR,
+            fg=TEXT_COLOR,
+            font=SECTION_FONT,
+        ).pack(anchor="w", pady=(0, 8))
+
+        # Instructions
+        tk.Label(
+            main_frame,
+            text="Be specific about colors, style, and details.\n"
+                 "Example: \"a red sundress with white polka dots and thin straps\"",
+            bg=BG_COLOR,
+            fg=TEXT_SECONDARY,
+            font=SMALL_FONT,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 12))
+
+        # Text area with scrollbar
+        text_frame = tk.Frame(main_frame, bg=BG_COLOR)
+        text_frame.pack(fill="both", expand=True, pady=(0, 12))
+
+        self._text_area = tk.Text(
+            text_frame,
+            height=5,
+            width=50,
+            font=BODY_FONT,
+            bg="#1E1E1E",
+            fg=TEXT_COLOR,
+            insertbackground=TEXT_COLOR,
+            wrap="word",
+            padx=8,
+            pady=8,
+        )
+        self._text_area.pack(side="left", fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(text_frame, command=self._text_area.yview)
+        scrollbar.pack(side="right", fill="y")
+        self._text_area.configure(yscrollcommand=scrollbar.set)
+
+        # Status label (for errors)
+        self._status_var = tk.StringVar()
+        self._status_label = tk.Label(
+            main_frame,
+            textvariable=self._status_var,
+            bg=BG_COLOR,
+            fg="#ff5555",
+            font=SMALL_FONT,
+        )
+        self._status_label.pack(anchor="w", pady=(0, 8))
+
+        # Buttons
+        button_frame = tk.Frame(main_frame, bg=BG_COLOR)
+        button_frame.pack(fill="x")
+
+        self._generate_btn = create_primary_button(
+            button_frame,
+            "Generate",
+            self._on_generate_click,
+            width=12,
+        )
+        self._generate_btn.pack(side="right", padx=(8, 0))
+
+        create_secondary_button(
+            button_frame,
+            "Cancel",
+            self._on_cancel,
+            width=10,
+        ).pack(side="right")
+
+        # Bind Enter (Ctrl+Enter to submit since Enter adds newline)
+        self.window.bind("<Control-Return>", lambda e: self._on_generate_click())
+        self.window.bind("<Escape>", lambda e: self._on_cancel())
+
+    def _on_generate_click(self) -> None:
+        """Handle Generate button click."""
+        prompt = self._text_area.get("1.0", "end").strip()
+
+        if not prompt:
+            self._status_var.set("Please enter an outfit description.")
+            return
+
+        if len(prompt) < 5:
+            self._status_var.set("Description is too short. Be more specific.")
+            return
+
+        self._result_prompt = prompt
+        self._close()
+        self._on_generate(prompt)
+
+    def _on_cancel(self) -> None:
+        """Handle cancel."""
+        self._result_prompt = None
+        self._close()
+
+    def _close(self) -> None:
+        """Close the modal."""
+        self.window.grab_release()
+        self.window.destroy()
 
 
 class OutfitReviewStep(WizardStep):
@@ -60,10 +221,39 @@ class OutfitReviewStep(WizardStep):
 This step shows all generated outfits. Scroll horizontally to see them all.
 
 IMPORTANT: You can do touch-ups on the NEXT step!
-Don't worry about getting backgrounds perfect here. The Expression Review step has "Touch Up BG" and "Remove BG" buttons for each expression, so you can fix any issues there. Focus on approving outfits you like.
+Don't worry about getting backgrounds perfect here. The Expression Review step has "Touch Up BG" and "Remove BG" buttons for each expression, so you can fix any issues there.
+
+Focus on:
+• Approving outfits you like
+• Tuning the Tolerance/Depth sliders to remove black halos around lineart and hair edges
+• Making sure the sliders don't eat into clothing or body details
+
+If there are still some leftover background spots INSIDE the character (like between hair strands or under arms), don't stress - you can clean those up with the flood-fill tool on the next step.
 
 WHAT HAPPENS NEXT
 When you click Next, the tool generates expressions (facial variations) for EACH outfit shown here. The Tolerance/Depth settings you set here will be used as defaults for expression background removal.
+
+═══════════════════════════════════════════════════
+TROUBLESHOOTING - WHEN TO REGENERATE
+═══════════════════════════════════════════════════
+
+REGENERATE if you see any of these issues:
+
+• Image goes off-screen or is cropped weirdly
+  The AI sometimes generates images that extend past the frame. Click "Regen Same Outfit" or "Regen New Outfit" to try again.
+
+• Bad framing / not matching other outfits
+  If one outfit looks zoomed in/out differently, or the character is positioned differently than others, regenerate to get better consistency.
+
+• Showing feet or bottom of legs
+  Your character should be cropped at mid-thigh (matching the base image). If feet are visible, regenerate.
+
+• Arm/body pixels look "eaten" or deleted
+  This is caused by the automatic background removal (rembg) being too aggressive. You have two options:
+  1. Click "Regen Same Outfit" - may produce a version that rembg handles better
+  2. Click "Switch to Manual BG Removal" - this keeps the original image with black background. You'll use the flood-fill tool on the next step to manually remove the background while preserving arm details.
+
+═══════════════════════════════════════════════════
 
 PREVIEW BACKGROUND (Top Right)
 Use the dropdown to preview outfits on different backgrounds:
@@ -77,6 +267,10 @@ REGENERATION BUTTONS
 Regen Same Outfit: Generate a new image using the same outfit description. Useful if the pose or quality isn't right but you like the outfit concept.
 
 Regen New Outfit: Generate with a completely different random outfit description. Use this to try a different look entirely.
+
+Custom...: Opens a popup where you can type your own outfit description. Use this when you have a specific outfit in mind (e.g., "a blue denim jacket with a white t-shirt underneath"). Be descriptive about colors, style, and details for best results.
+
+If your custom description triggers content filters, you'll see an error message and the current outfit will be kept - nothing is lost.
 
 Note: "Regen Same Outfit" is hidden for underwear because the tier system makes same-prompt regeneration unreliable.
 
@@ -119,6 +313,9 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         self._bg_var: Optional[tk.StringVar] = None
         self._is_generating: bool = False
         self._original_preview_sizes: Dict[int, int] = {}  # Track original max_h per outfit
+        self._card_frames: List[tk.Frame] = []  # Track card frames for per-card loading
+        self._card_overlays: Dict[int, tk.Frame] = {}  # Active loading overlays
+        self._regenerating_idx: Optional[int] = None  # Track which card is being regenerated
 
     def build_ui(self, parent: tk.Frame) -> None:
         parent.configure(bg=BG_COLOR)
@@ -154,6 +351,18 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         bg_menu.configure(width=12, bg=CARD_BG, fg=TEXT_COLOR)
         bg_menu.pack(side="left")
         self._bg_var.trace_add("write", lambda *_: self._update_all_previews())
+
+        # Inline tip
+        tk.Label(
+            parent,
+            text="💡 Tolerance/Depth settings here will apply to ALL expressions. "
+                 "You can still fix individual expressions on the next step.",
+            bg=BG_COLOR,
+            fg="#FFB347",  # Warning orange
+            font=SMALL_FONT,
+            wraplength=800,
+            justify="left",
+        ).pack(fill="x", pady=(0, 8))
 
         # Scrollable canvas for outfit cards
         canvas_frame = tk.Frame(parent, bg=BG_COLOR)
@@ -239,9 +448,15 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         self._is_generating = True
         self.show_loading("Generating outfits...")
 
+        def update_progress(current: int, total: int, outfit_name: str):
+            """Update loading message with current progress."""
+            self.wizard.root.after(0, lambda: self.show_loading(
+                f"Generating outfit {current}/{total}: {outfit_name.capitalize()}..."
+            ))
+
         def generate():
             try:
-                paths, cleanup_data, used_prompts = self._do_outfit_generation()
+                paths, cleanup_data, used_prompts = self._do_outfit_generation(update_progress)
                 self.wizard.root.after(0, lambda p=paths, c=cleanup_data, u=used_prompts: self._on_generation_complete(p, c, u))
             except Exception as e:
                 error_msg = str(e)
@@ -250,11 +465,13 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         thread = threading.Thread(target=generate, daemon=True)
         thread.start()
 
-    def _do_outfit_generation(self) -> Tuple[List[Path], List[Tuple[bytes, bytes]], Dict[str, str]]:
+    def _do_outfit_generation(self, progress_callback=None) -> Tuple[List[Path], List[Tuple[bytes, bytes]], Dict[str, str]]:
         """Perform outfit generation."""
         from ...processing import generate_outfits_once, get_unique_folder_name
         from ...api import build_outfit_prompts_with_config
         from ..api_setup import ensure_api_key
+
+        log_generation_start("outfits", count=len(self.state.selected_outfits))
 
         if not self.state.api_key:
             self.state.api_key = ensure_api_key()
@@ -303,6 +520,7 @@ When satisfied with all outfits, click Next to proceed to expression generation.
             archetype_label=self.state.archetype_label,
             include_base_outfit=self.state.use_base_as_outfit,
             for_interactive_review=True,
+            progress_callback=progress_callback,
         )
 
         return paths, cleanup_data, used_prompts
@@ -311,6 +529,8 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         """Handle outfit generation completion."""
         self._is_generating = False
         self.hide_loading()
+
+        log_generation_complete("outfits", True, f"Generated {len(paths)} outfits")
 
         self.state.outfit_paths = paths
         self.state.outfit_cleanup_data = cleanup_data
@@ -337,8 +557,14 @@ When satisfied with all outfits, click Next to proceed to expression generation.
     def _on_generation_error(self, error: str) -> None:
         """Handle generation error."""
         self._is_generating = False
-        self.hide_loading()
-        messagebox.showerror("Generation Error", f"Failed to generate outfits:\n\n{error}")
+        log_generation_complete("outfits", False, error)
+        # Hide per-card loading if regenerating single outfit, otherwise hide full-screen loading
+        if self._regenerating_idx is not None:
+            self._hide_card_loading(self._regenerating_idx)
+            self._regenerating_idx = None
+        else:
+            self.hide_loading()
+        show_error_dialog(self._canvas, "Generation Error", f"Failed to generate outfits:\n\n{error}")
 
     def _load_existing_outfits(self) -> None:
         """Load existing outfits from state."""
@@ -365,6 +591,8 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         self._tolerance_vars.clear()
         self._depth_vars.clear()
         self._original_preview_sizes.clear()
+        self._card_frames.clear()
+        self._card_overlays.clear()
 
         # Get canvas dimensions for sizing - use larger images
         self._canvas.update_idletasks()
@@ -378,6 +606,7 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         for idx, (path, name) in enumerate(zip(self.state.outfit_paths, outfit_names)):
             card = self._build_single_outfit_card(idx, path, name, max_thumb_h)
             card.grid(row=0, column=idx, padx=10, pady=6)
+            self._card_frames.append(card)
 
     def _build_single_outfit_card(self, idx: int, path: Path, name: str, max_h: int) -> tk.Frame:
         """Build a single outfit card with image and controls."""
@@ -427,7 +656,14 @@ When satisfied with all outfits, click Next to proceed to expression generation.
                     regen_frame, "Regen New Outfit",
                     lambda i=idx: self._regenerate_outfit(i, same_prompt=False),
                     width=14
-                ).pack(side="left")
+                ).pack(side="left", padx=(0, 4))
+
+            # Custom Regen button - always show for non-base outfits
+            create_secondary_button(
+                regen_frame, "Custom...",
+                lambda i=idx, n=name: self._open_custom_regen_modal(i, n),
+                width=8
+            ).pack(side="left")
 
         # BG mode and cleanup controls
         mode = self.state.outfit_bg_modes.get(idx, "rembg")
@@ -619,13 +855,47 @@ When satisfied with all outfits, click Next to proceed to expression generation.
             self.state.current_outfit_bytes = self._current_bytes.copy()
         self._build_outfit_cards()
 
+    def _show_card_loading(self, idx: int, message: str = "Regenerating...") -> None:
+        """Show a loading overlay on a specific card."""
+        if idx < 0 or idx >= len(self._card_frames):
+            return
+
+        card = self._card_frames[idx]
+
+        # Create semi-transparent overlay frame
+        overlay = tk.Frame(card, bg="#1a1a2e")
+        overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        # Loading message
+        tk.Label(
+            overlay,
+            text=message,
+            bg="#1a1a2e",
+            fg=TEXT_COLOR,
+            font=BODY_FONT,
+            wraplength=200,
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        self._card_overlays[idx] = overlay
+
+    def _hide_card_loading(self, idx: int) -> None:
+        """Hide the loading overlay on a specific card."""
+        if idx in self._card_overlays:
+            try:
+                self._card_overlays[idx].destroy()
+            except tk.TclError:
+                pass
+            del self._card_overlays[idx]
+
     def _regenerate_outfit(self, idx: int, same_prompt: bool = True) -> None:
         """Regenerate a single outfit."""
         if self._is_generating:
             return
 
         self._is_generating = True
-        self.show_loading(f"Regenerating outfit...")
+        self._regenerating_idx = idx  # Track which card is being regenerated
+        # Use per-card loading instead of full-screen overlay
+        self._show_card_loading(idx, "Regenerating\noutfit...")
 
         def regenerate():
             try:
@@ -764,7 +1034,8 @@ When satisfied with all outfits, click Next to proceed to expression generation.
     def _on_single_regen_complete(self, idx: int, new_path: Path, cleanup_data: Tuple[bytes, bytes], used_prompt: str) -> None:
         """Handle single outfit regeneration completion."""
         self._is_generating = False
-        self.hide_loading()
+        self._hide_card_loading(idx)
+        self._regenerating_idx = None
 
         # Save current cleanup settings before rebuilding (preserves other outfits' settings)
         self._save_cleanup_settings()
@@ -794,6 +1065,98 @@ When satisfied with all outfits, click Next to proceed to expression generation.
 
         # Rebuild cards to show correct UI for mode
         self._build_outfit_cards()
+
+    def _open_custom_regen_modal(self, idx: int, outfit_name: str) -> None:
+        """Open the custom regeneration modal for an outfit."""
+        if self._is_generating:
+            return
+
+        def on_generate(custom_prompt: str):
+            self._regenerate_outfit_with_custom_prompt(idx, outfit_name, custom_prompt)
+
+        CustomRegenModal(self.wizard.root, outfit_name, on_generate)
+
+    def _regenerate_outfit_with_custom_prompt(self, idx: int, outfit_name: str, custom_prompt: str) -> None:
+        """Regenerate an outfit with a user-provided custom prompt."""
+        if self._is_generating:
+            return
+
+        self._is_generating = True
+        self._regenerating_idx = idx  # Track which card is being regenerated
+        # Use per-card loading instead of full-screen overlay
+        self._show_card_loading(idx, f"Generating\ncustom\n{outfit_name}...")
+
+        def regenerate():
+            try:
+                new_path, new_cleanup, used_prompt = self._do_custom_regeneration(idx, custom_prompt)
+                self.wizard.root.after(0, lambda i=idx, p=new_path, c=new_cleanup, u=used_prompt: self._on_single_regen_complete(i, p, c, u))
+            except Exception as e:
+                error_msg = str(e)
+                self.wizard.root.after(0, lambda msg=error_msg: self._on_custom_regen_error(msg))
+
+        thread = threading.Thread(target=regenerate, daemon=True)
+        thread.start()
+
+    def _do_custom_regeneration(self, idx: int, custom_prompt: str) -> Tuple[Path, Tuple[bytes, bytes], str]:
+        """
+        Regenerate an outfit with a custom user-provided prompt.
+
+        Args:
+            idx: Outfit index
+            custom_prompt: User's custom outfit description
+
+        Returns:
+            Tuple of (path, (original_bytes, rembg_bytes), used_prompt)
+
+        Raises:
+            RuntimeError: If regeneration fails (e.g., safety filter blocked).
+        """
+        from ...processing import generate_single_outfit
+
+        outfit_names = self.state.generated_outfit_keys.copy() if self.state.generated_outfit_keys else []
+        outfit_key = outfit_names[idx]
+        outfits_dir = self.state.character_folder / "a" / "outfits"
+
+        # Use the custom prompt directly
+        result = generate_single_outfit(
+            api_key=self.state.api_key,
+            base_pose_path=self.state.base_pose_path,
+            outfits_dir=outfits_dir,
+            gender_style=self.state.gender_style,
+            outfit_key=outfit_key,
+            outfit_desc=custom_prompt,
+            outfit_prompt_config=self.state.outfit_prompt_config,
+            archetype_label=self.state.archetype_label,
+            for_interactive_review=True,
+        )
+
+        if result is None:
+            raise RuntimeError(
+                f"The AI declined to generate this outfit.\n\n"
+                f"Your description may have triggered content filters.\n\n"
+                f"Try a different description."
+            )
+
+        new_path, original_bytes, rembg_bytes, used_prompt = result
+
+        # Update stored prompt with the custom prompt that worked
+        if not self.state.outfit_prompts:
+            self.state.outfit_prompts = {}
+        self.state.outfit_prompts[outfit_key] = custom_prompt
+
+        return new_path, (original_bytes, rembg_bytes), used_prompt
+
+    def _on_custom_regen_error(self, error: str) -> None:
+        """Handle custom regeneration error - show message but keep current image."""
+        self._is_generating = False
+        if self._regenerating_idx is not None:
+            self._hide_card_loading(self._regenerating_idx)
+            self._regenerating_idx = None
+        show_error_dialog(
+            self._canvas,
+            "Generation Failed",
+            f"{error}\n\nThe current outfit image has been kept."
+        )
 
     def _on_regenerate_all(self) -> None:
         """Regenerate all outfits."""

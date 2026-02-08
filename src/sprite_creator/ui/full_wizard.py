@@ -276,13 +276,17 @@ class FullWizard:
 
         help_text = step.STEP_HELP
 
+        # Make help button prominent on all steps for better visibility
+        use_prominent = True
+
         # Recreate help button with new text
         parent = self._help_btn.master
         self._help_btn.destroy()
         self._help_btn = create_help_button(
             parent,
             f"Help: {step.STEP_TITLE}",
-            help_text
+            help_text,
+            prominent=use_prominent
         )
         self._help_btn.pack(side="left")
 

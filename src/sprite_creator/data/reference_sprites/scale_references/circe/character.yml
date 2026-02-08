@@ -1,0 +1,7 @@
+eye_line: 0.2
+name_color: '#935288'
+poses:
+  a:
+    facing: right
+scale: 1.1
+voice: woman

@@ -1,0 +1,13 @@
+default_outfit: suit
+display_name: Jack Mallory
+eye_line: 0.18
+name_color: '#786f67'
+poses:
+  a:
+    center_height: 270
+    center_width: 277
+    facing: right
+    image_height: 650
+    image_width: 500
+scale: 1.1
+voice: deep

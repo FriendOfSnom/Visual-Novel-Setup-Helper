@@ -1,0 +1,11 @@
+eye_line: 0.2
+name_color: '#e8cb90'
+poses:
+  a:
+    center_width: 160
+    facing: right
+  b:
+    center_width: 160
+    facing: right
+scale: 1.1
+voice: tomboy

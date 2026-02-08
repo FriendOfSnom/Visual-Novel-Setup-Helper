@@ -1,0 +1,9 @@
+default_outfit: suit
+display_name: Donna Barnes
+eye_line: 0.17
+name_color: '#784d61'
+poses:
+  a:
+    center_width: 200
+scale: 1.0
+voice: woman

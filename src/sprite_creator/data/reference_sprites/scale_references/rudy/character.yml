@@ -1,0 +1,9 @@
+default_outfit: rudy
+display_name: Rudy
+eye_line: 0.0
+name_color: '#D68255'
+poses:
+  a:
+    facing: left
+scale: 0.8
+voice: deep

@@ -1,0 +1,6 @@
+eye_line: 0.02
+name_color: '#f5ad68'
+poses:
+  a:
+    facing: right
+scale: 0.9

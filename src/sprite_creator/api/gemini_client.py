@@ -17,6 +17,7 @@ from PIL import Image
 from rembg import remove as rembg_remove, new_session as rembg_new_session
 
 from ..config import CONFIG_PATH, GEMINI_API_URL
+from ..logging_utils import log_api_call, log_debug, log_warning, log_error
 from .exceptions import GeminiAPIError, GeminiSafetyError
 
 
@@ -396,6 +397,7 @@ def strip_background_ai(
         PNG image bytes with transparent background.
     """
     try:
+        log_debug("Starting AI background removal")
         session = get_rembg_session()
         result = rembg_remove(
             image_bytes,
@@ -418,8 +420,10 @@ def strip_background_ai(
                 passes=passes,
             )
 
+        log_debug("AI background removal completed")
         return result
     except Exception as e:
+        log_warning(f"AI background removal failed: {e}")
         print(f"  [WARN] AI background removal failed, returning original: {e}")
         return image_bytes
 
@@ -538,6 +542,8 @@ def _call_gemini_with_parts(
     max_retries = 3
     last_error = None
 
+    log_debug(f"Gemini API call starting: {context}")
+
     for attempt in range(1, max_retries + 1):
         try:
             response = requests.post(
@@ -549,12 +555,14 @@ def _call_gemini_with_parts(
             # Handle retryable errors
             if not response.ok:
                 if response.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                    log_warning(f"Gemini API error {response.status_code} ({context}) attempt {attempt}, retrying...")
                     print(
                         f"[WARN] Gemini API error {response.status_code} ({context}) "
                         f"attempt {attempt}; retrying..."
                     )
                     last_error = f"Gemini API error {response.status_code}: {response.text}"
                     continue
+                log_api_call(context, False, f"HTTP {response.status_code}: {response.text[:200]}")
                 raise GeminiAPIError(f"Gemini API error {response.status_code}: {response.text}")
 
             data = response.json()
@@ -565,6 +573,7 @@ def _call_gemini_with_parts(
                 finish_reason = candidate.get("finishReason")
                 if finish_reason in ("SAFETY", "IMAGE_SAFETY", "IMAGE_OTHER"):
                     safety_ratings = candidate.get("safetyRatings", [])
+                    log_api_call(context, False, f"Safety blocked: {finish_reason}")
                     raise GeminiSafetyError(
                         f"Content blocked by safety filters ({context}): {finish_reason}",
                         safety_ratings
@@ -573,6 +582,7 @@ def _call_gemini_with_parts(
             raw_bytes = _extract_inline_image_from_response(data)
 
             if raw_bytes is not None:
+                log_api_call(context, True, f"Image received ({len(raw_bytes)} bytes)")
                 if skip_background_removal:
                     return raw_bytes
                 # Apply AI background removal with optional custom settings
@@ -583,16 +593,19 @@ def _call_gemini_with_parts(
                 )
 
             # Log the full response to diagnose why there's no image
+            log_debug(f"Gemini response without image data: {json.dumps(data, indent=2)[:500]}")
             print(f"[DEBUG] Gemini response without image data:")
             print(f"[DEBUG] Full response: {json.dumps(data, indent=2)}")
 
             last_error = f"No image data in Gemini response ({context})."
             if attempt < max_retries:
+                log_warning(f"Gemini response missing image ({context}) attempt {attempt}, retrying...")
                 print(
                     f"[WARN] Gemini response missing image ({context}) "
                     f"attempt {attempt}; retrying..."
                 )
                 continue
+            log_api_call(context, False, "No image data in response")
             raise GeminiAPIError(last_error)
 
         except GeminiSafetyError:
@@ -601,11 +614,13 @@ def _call_gemini_with_parts(
         except Exception as e:
             last_error = str(e)
             if attempt < max_retries:
+                log_warning(f"Gemini call failed ({context}) attempt {attempt}: {e}")
                 print(
                     f"[WARN] Gemini call failed ({context}) "
                     f"attempt {attempt}; retrying: {e}"
                 )
                 continue
+            log_api_call(context, False, f"Failed after {max_retries} attempts: {last_error}")
             raise GeminiAPIError(
                 f"Gemini call failed after {max_retries} attempts ({context}): {last_error}"
             )
@@ -680,9 +695,11 @@ def call_gemini_text(
     }
 
     try:
+        log_debug("Gemini text API call starting")
         response = requests.post(text_url, headers=headers, json=payload)
 
         if not response.ok:
+            log_api_call("text_generation", False, f"HTTP {response.status_code}")
             raise GeminiAPIError(f"Gemini text API error {response.status_code}: {response.text[:200]}")
 
         data = response.json()
@@ -693,13 +710,17 @@ def call_gemini_text(
             content = candidates[0].get("content", {})
             parts = content.get("parts", [])
             if parts:
-                return parts[0].get("text", "").strip()
+                result = parts[0].get("text", "").strip()
+                log_api_call("text_generation", True, f"Got {len(result)} chars")
+                return result
 
+        log_api_call("text_generation", False, "No text in response")
         raise GeminiAPIError("No text in Gemini response")
 
     except GeminiAPIError:
         raise
     except Exception as e:
+        log_api_call("text_generation", False, str(e))
         raise GeminiAPIError(f"Gemini text API call failed: {e}")
 
 

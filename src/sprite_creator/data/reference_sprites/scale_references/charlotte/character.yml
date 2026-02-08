@@ -1,0 +1,14 @@
+default_outfit: casual_hairloop
+eye_line: 0.1
+name_color: '#5e606d'
+scale: 0.9
+mutations:
+  hairloop:
+  - uniform_hairloop
+  - casual_hairloop
+  - dress
+  hairdown:
+  - nude
+  - pajamas
+  - underwear
+  - jeans
