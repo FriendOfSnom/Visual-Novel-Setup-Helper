@@ -1,496 +1,183 @@
-# Visual Novel Development Toolkit (v2.0.0)
+# AI Sprite Creator
 
-A comprehensive, AI-powered toolkit for creating visual novels with Ren'Py. This suite provides everything needed to create professional VN projects: from project setup and AI character generation to expression sheet creation.
-
-Perfect for game developers, writers, and creators who want to build accessible visual novels with custom character systems.
+AI-powered character sprite generator for visual novels, using Google Gemini. Create complete characters with multiple outfits, expressions, and automatic background removal in a guided wizard.
 
 ---
 
-## Three-Tool Workflow
+## Features
 
-### **Tool 1: Ren'Py Project Scaffolder**
-
-Creates production-ready Ren'Py projects with custom character support.
-
-**What it does:**
-
--   Downloads Ren'Py SDK 8.5.0 automatically (if missing)
--   Launches official Ren'Py launcher for project creation
--   Injects custom character loading system
--   Adds support for dynamic character positioning and expressions
--   Optionally imports existing character folders
--   Moves project to your chosen location
-
-**Custom Features Added to Projects:**
-
--   Auto-loads characters from `game/images/characters/` folder
--   Custom position transforms: `centerleft`, `centerright`, `faceleft`, `faceright`
--   Automatic character voice and color support
--   Dynamic outfit and expression swapping
--   Support for character metadata via `character.yml` files
+- **Three creation modes**: Reference image, text prompt, or character fusion
+- **Multiple outfits**: Casual, formal, athletic, swimsuit, uniform (custom too)
+- **Expression generation**: Neutral, happy, sad, angry, surprised, and custom expressions
+- **Automatic background removal** with manual touch-up tools
+- **Add to existing characters**: Add new outfits or expressions to previously created characters
+- **Scale comparison** with 77 reference sprites for accurate in-game sizing
+- **Expression sheet generation** for visual reference
+- **Sprite Tester** to preview characters in a simulated Ren'Py environment
 
 ---
 
-### **Tool 2: Gemini Character Creator**
+## Getting Started
 
-AI-powered character sprite generator using Google Gemini vision models.
+### API Key Setup
 
-**What it does:**
+This tool requires a Google Cloud API key with Gemini access.
 
--   Generate character sprites from text prompts or reference images
--   Create multiple expressions (happy, sad, angry, neutral, etc.)
--   Generate multiple outfits (casual, uniform, etc.)
--   Automatically crop and scale sprites
--   Create game-ready folder structures
--   Generate `character.yml` metadata files
+1. Go to [Google AI Studio](https://aistudio.google.com)
+2. Create a project and enable the Gemini API
+3. Generate an API key
+4. Enter it in the **API Settings** dialog on the launcher
 
-**Output Format:**
+New Google Cloud accounts get **$300 in free credits** - more than enough for hundreds of characters.
+
+### Running the App
+
+**From executable (recommended):**
+Double-click `sprite_creator.exe`
+
+**From source:**
+
+```bash
+pip install -r requirements.txt
+python -m sprite_creator
+```
+
+---
+
+## Launcher Modes
+
+### Character Sprite Creator (Recommended)
+
+The full character creation wizard. Walks you through every step:
+
+1. **Source Selection** - Upload an image, describe a character, or fuse two together
+2. **Character Setup** - Set name, voice, archetype; crop and normalize the base image
+3. **Generation Options** - Pick outfits and expressions to generate
+4. **Review** - Confirm selections before generation begins
+5. **Outfit Review** - Review generated outfits, adjust background removal, regenerate
+6. **Expression Review** - Review expressions, touch up backgrounds
+7. **Eye Line & Color** - Set eye position and pick name color
+8. **Scale** - Compare with reference sprites for in-game sizing
+9. **Complete** - View summary and open character folder
+
+### Add to Character
+
+Add new outfits or expressions to an existing character folder:
+
+- Select a base sprite from the character's existing images
+- Normalize it to match AI output resolution
+- Generate new outfits that match the existing character's style
+- New outfits become new pose letters (c, d, e...)
+- Existing settings (voice, name, eye line) are preserved
+
+### Expression Sheet Generator
+
+Create expression reference sheet images from existing character folders. Useful for visual reference or sharing character designs.
+
+### Sprite Tester
+
+Preview character sprites in a simulated Ren'Py environment. Test outfit switching, expression changes, and the character loading system.
+
+---
+
+## Output Structure
 
 ```
 character_name/
-├── character.yml          # Metadata (voice, scale, colors)
-└── a/                     # Pose folder (letter poses)
-    ├── faces/
-    │   └── face/
-    │       ├── happy.png
-    │       ├── sad.png
-    │       ├── angry.png
-    │       └── neutral.png
-    └── outfits/
-        ├── casual.png
-        └── uniform.png
+  character.yml             Metadata (voice, scale, eye line, colors)
+  base.png                  Original base image for reference
+  a/                        Pose A (first outfit)
+    outfits/
+      0.png                 Outfit image
+    faces/face/
+      0.png                 Neutral expression
+      1.png                 Happy
+      2.png                 Sad
+      ...                   Additional expressions
+  b/                        Pose B (second outfit)
+    ...
+  expression_sheets/        Generated reference sheets
 ```
 
-**Integration:**
-Characters created with Tool 2 are automatically compatible with projects created by Tool 1. Simply copy character folders to `game/images/characters/` and they'll load automatically!
+Characters are compatible with Student Transfer's character system and any Ren'Py project that uses the same folder structure.
 
 ---
 
-### **Tool 3: Visual Scene Editor** (Planned)
+## Backup System
 
-A complete GUI-based scene editor for writing visual novels without code.
+Full-size character images are automatically backed up before scaling. These backups are stored in `~/.sprite_creator/backups/` and provide the highest quality source images when adding new content to existing characters.
 
-**What it will do:**
-
--   Live preview window showing the current scene in real-time
--   Drag-and-drop character positioning on screen
--   Visual selectors for expressions, outfits, backgrounds, and sounds
--   Dialogue editor with character selection dropdown
--   Automatic expression sheet generation and display
--   Preset position buttons (left, centerleft, center, centerright, right)
--   Flip controls (faceleft, faceright)
--   Transition selector for character entrances/exits
--   Forward/back arrows to navigate scene timeline (undo/redo)
--   "Next" button to generate and append Ren'Py code to script.rpy
-
-**Vision:**
-This tool will enable non-programmers to create complete visual novels using an intuitive GUI interface, automatically generating proper Ren'Py script code behind the scenes.
+Use the **Clear Backups** button on the launcher to free disk space. Note that clearing backups means "Add to Character" will use the scaled (slightly lower quality) images from the character folder instead.
 
 ---
 
-## Quick Start
-
-### First-Time Setup
-
-#### 1. Install Python Dependencies
-
-```bash
-# Windows
-start-windows.bat
-
-# macOS
-./start-mac.command
-```
-
-This will create a virtual environment and install all required packages.
-
-#### 2. Download Ren'Py SDK (Required for Tool 1)
-
-The toolkit will prompt you to download the SDK when you first run Tool 1. Alternatively, you can download it manually:
-
-```bash
-python download_renpy_sdk.py
-```
-
-This downloads Ren'Py SDK 8.5.0 (~150 MB) to the toolkit folder.
-
----
-
-## Requirements
-
--   **Python 3.10 or higher**
--   **Google Gemini API Key** (for Tool 2 - Character Creator)
-    -   Get your free API key at: https://aistudio.google.com/apikey
-    -   Set environment variable: `GEMINI_API_KEY=your_key_here`
-
-### Python Dependencies
-
-Installed automatically via launcher scripts:
-
-```
-google-generativeai
-pillow>=10.3
-pyyaml
-requests
-beautifulsoup4
-pandas
-rembg  # Optional: for background removal experiments
-```
-
----
-
-## Usage
-
-### Running the Toolkit
-
-**Windows:**
-
-```bash
-start-windows.bat
-```
-
-**macOS:**
-
-```bash
-./start-mac.command
-```
-
-This launches the main menu where you can select:
-
-1. **Create new Ren'Py project** (Tool 1 - Project Scaffolder)
-2. **Create new character sprites** (Tool 2 - Gemini Character Creator)
-3. **Generate expression sheets** (Utility tool)
-   Q. Quit
-
-**Note:** Tool 3 (Visual Scene Editor) is planned for future implementation.
-
----
-
-## Workflow Example
-
-### Creating a Complete Visual Novel Project
-
-1. **Run Tool 1: Create a New Project**
-
-    - Select option 1 from the menu
-    - SDK downloads automatically (if not present)
-    - Ren'Py launcher opens
-    - Create your project with a name, resolution, and theme
-    - Close Ren'Py when done
-    - Browse to your project location (or let it stay in SDK/projects/)
-    - Character system is automatically injected!
-
-2. **Run Tool 2: Create Characters**
-
-    - Select option 2 from the menu
-    - Choose output folder (e.g., Desktop or project's `game/images/characters/`)
-    - Enter character name and description
-    - Generate expressions and outfits with AI
-    - Review and crop results
-    - Save to character folder
-
-3. **Copy Characters to Project** (if needed)
-
-    - If you didn't save directly to the project, copy character folders to:
-      `YourProject/game/images/characters/`
-
-4. **Generate Expression Sheets** (optional)
-
-    - Select option 3 from the menu
-    - Choose the folder containing your character folders
-    - Expression sheets are generated for reference
-
-5. **Write Your Story**
-
-    - Option A: Use Tool 3 (Visual Scene Editor) when available - GUI-based scene creation
-    - Option B: Edit script.rpy manually in your preferred text editor
-
-6. **Launch Your Project in Ren'Py**
-    - Open Ren'Py SDK
-    - Select your project
-    - Click "Launch Project"
-    - Characters are automatically loaded and ready to use!
-
-### Using Characters in Your Script
-
-```renpy
-label start:
-    scene bg room
-
-    # Show character with outfit and expression
-    show alice casual happy at centerright
-    alice "Hello! Nice to meet you!"
-
-    # Change expression
-    show alice casual sad
-    alice "I'm feeling a bit down today..."
-
-    # Flip character to face left
-    show alice at faceleft
-    alice "Looking this way!"
-
-    # Change outfit
-    show alice uniform neutral at centerleft
-    alice "Ready for school!"
-```
-
----
-
-## Running Your Game
-
-### Method 1: Using Ren'Py SDK Launcher (Recommended)
-
-1. **Open the Ren'Py SDK:**
-
-    - Navigate to: `renpy-8.5.0-sdk/`
-    - Windows: Double-click `renpy.exe`
-    - Mac/Linux: Run `./renpy.sh`
-
-2. **Select Your Project:**
-
-    - Your project will appear in the left panel
-    - Click on your project name to select it
-
-3. **Launch the Game:**
-    - Click the **"Launch Project"** button
-    - Your game will start in a new window
-
-### During Development
-
-**Testing Changes:**
-
--   Save your script file
--   Press **Shift+R** in the running game to reload
--   Or restart the game from the SDK launcher
-
-**Common Shortcuts in Game:**
-
--   `Shift+R` - Reload game (after script changes)
--   `Shift+D` - Developer menu
--   `Shift+O` - Console
--   `Esc` - Main menu
-
-### Building for Distribution
-
-Once your game is complete:
-
-1. Open Ren'Py SDK
-2. Select your project
-3. Click **"Build Distributions"**
-4. Select platforms (Windows, Mac, Linux, etc.)
-5. Click "Build"
-
-This creates standalone executables in `YourProject-dists/` that players can run without Ren'Py.
-
----
-
-## Project Structure
-
-```
-Visual-Novel-Development-Toolkit/
-├── src/                           # Source code
-│   ├── main.py                    # Main launcher (menu system)
-│   │
-│   ├── renpy_scaffolder/          # Tool 1: Project Scaffolder
-│   │   ├── scaffolder.py          # Main scaffolder logic
-│   │   ├── sdk_downloader.py      # SDK download helper
-│   │   └── templates/             # Character system template files
-│   │       ├── character.py       # Character loading system
-│   │       ├── body.py            # Body/Pose/Expression classes
-│   │       ├── char_sprites.py    # Person/Ghost sprite classes
-│   │       ├── pymage_size.py     # Image utilities
-│   │       └── effects.rpy        # Custom transforms & animations
-│   │
-│   ├── sprite_creator/            # Tool 2: Gemini Character Creator
-│   │   ├── pipeline.py            # Main orchestrator
-│   │   ├── constants.py           # Configuration and constants
-│   │   ├── expression_sheets.py   # Expression sheet generator
-│   │   ├── api/                   # Gemini API integration
-│   │   ├── processing/            # Image processing workflows
-│   │   ├── ui/                    # Tkinter UI components
-│   │   └── data/                  # Data files
-│   │       ├── names.csv          # Name pools for random generation
-│   │       ├── outfit_prompts.csv # 1500+ outfit descriptions
-│   │       └── reference_sprites/ # Reference characters for scaling
-│   │
-│   └── vn_writer/                 # Tool 3: VN Writer (Scene Editor)
-│       └── editor.py              # Visual scene editor
-│
-├── renpy-8.5.0-sdk/               # Ren'Py SDK (downloaded automatically)
-├── requirements.txt               # Python dependencies
-├── start-windows.bat              # Windows launcher
-├── start-mac.command              # macOS launcher
-└── README.md                      # This file
-```
-
----
-
-## Academic Use
-
-This toolkit was developed as a graduation project to make visual novel development more accessible. It demonstrates:
-
--   **AI Integration**: Leveraging Google Gemini for creative asset generation
--   **Automated Workflows**: Streamlining game development pipelines
--   **Accessibility**: Enabling non-programmers to create professional VNs
--   **Modular Architecture**: Clean separation of tools and responsibilities
-
-**Perfect for:**
-
--   Computer Science capstone projects
--   Game development portfolios
--   Independent VN creators
--   Accessibility technology research
-
----
-
-## Advanced Configuration
-
-### Character System Features
-
-Projects created with Tool 1 include a powerful character system:
-
-**Position Transforms:**
-
--   `left`, `centerleft`, `center`, `centerright`, `right` - Screen positions
--   `faceleft`, `faceright` - Flip character sprites horizontally
-
-**Character Methods (in script.rpy):**
-
-```python
-# Access character objects
-alice.outfit = "uniform"           # Change outfit
-alice.add_accessory("glasses")     # Add accessory
-alice.remove_accessory("hat")      # Remove accessory
-```
-
-**Character YAML Format:**
-
-```yaml
-display_name: "Alice"
-name_color: "#ff69b4"
-scale: 0.85
-voice: "girl"
-eye_line: 0.42
-default_outfit: "casual"
-```
+## Tips
+
+- Every wizard step has a **?** help button with detailed instructions
+- Use the **ST Style** toggle to match Student Transfer art style, or disable it for any art style
+- If Gemini's safety filters block a generation, the wizard skips it and continues
+- You can regenerate individual outfits and expressions without starting over
+- **View API Usage** on the launcher opens Google AI Studio's usage dashboard
 
 ---
 
 ## Troubleshooting
 
-### "Ren'Py SDK not found!"
+### API key not working
 
--   Run Tool 1 and select "Yes" when prompted to download the SDK
--   Or manually run: `python download_renpy_sdk.py`
+- Make sure you're using a Google Cloud API key (not a basic AI Studio free-tier key)
+- Check your key in **API Settings** on the launcher
+- Verify your account has credits at [AI Studio Usage](https://aistudio.google.com/usage)
 
-### "GEMINI_API_KEY not set"
+### Outfit or expression generation blocked
 
--   Get your API key from https://aistudio.google.com/apikey
--   Set environment variable before running:
+- Gemini's safety filters may block certain content
+- The wizard skips blocked items and continues with others
+- Try regenerating with a different random seed
+- Custom prompts are more likely to be blocked than random ones
 
-    ```bash
-    # Windows (CMD)
-    set GEMINI_API_KEY=your_key_here
+### Background removal looks wrong
 
-    # Windows (PowerShell)
-    $env:GEMINI_API_KEY="your_key_here"
+- Adjust **Tolerance** slider (higher = more aggressive removal)
+- Adjust **Depth** slider (higher = cleaner edges)
+- Switch to **Manual** mode for click-based flood fill
+- Use **Touch Up BG** on expression review for fine adjustments
 
-    # macOS/Linux
-    export GEMINI_API_KEY=your_key_here
-    ```
+### Next button is disabled
 
-### Characters not loading in game
+- **Character Setup**: Fill in Voice, Name, and Archetype, then accept your selection
+- **Add to Character**: Normalize and accept the base sprite first
+- **Review**: Check the acknowledgment box if a warning is shown
+- **Expression Review**: Navigate through all outfits before continuing
 
--   Verify folder structure matches Tool 2 output format
--   Check that characters are in `game/images/characters/`
--   Ensure `character.yml` exists in character folder
--   Launch game and check console for error messages
+### Log files
 
-### Tkinter errors on macOS
-
--   Ensure you're using Homebrew Python (not system Python)
--   The `start-mac.command` script handles this automatically
+- Logs are saved to `logs/sprite_creator.log` next to the executable
+- The log file resets on each launch
+- Include log contents when reporting bugs
 
 ---
 
-## Changelog
+## Requirements
 
-### v2.1.0 (Current - Preparing for Standalone Release)
+- **Python 3.10+** (when running from source)
+- **Google Gemini API Key** (Google Cloud with credits)
+- **Windows 10/11** (primary platform; macOS/Linux may work from source)
 
-**Outfit System Overhaul:**
--   Split monolithic `outfit_prompts.csv` into 36 individual files organized by archetype and outfit type (e.g., `young_woman_casual.csv`, `adult_man_formal.csv`)
--   Added **underwear** as a new outfit option for all character archetypes
--   Better per-archetype customization with dedicated prompt files
+### Dependencies (installed via requirements.txt)
 
-**Multi-Tier Safety Fallback System:**
--   Implemented 5-tier fallback system when Gemini's safety filters block content:
-    -   Tier 1: Original prompt (retry once)
-    -   Tier 2: Alternative random prompt from CSV
-    -   Tier 3: Archetype-specific modest description
-    -   Tier 4: Ultra-generic description (no specific garment names)
-    -   Tier 5: Athletic wear alternative (sports bra/shorts framing)
--   Safety fallbacks for sensitive expressions (embarrassed, flustered)
--   Graceful degradation instead of pipeline failure
-
-**Error Handling Improvements:**
--   New custom exception classes: `GeminiAPIError` and `GeminiSafetyError`
--   Better retry logic for transient API errors (429, 5xx status codes)
--   Detailed safety filter logging for debugging
-
-**UI Enhancements:**
--   **Manual background removal tool**: Click-based flood fill with adjustable threshold
--   Enhanced review windows with per-outfit cleanup controls (tolerance/depth sliders)
--   Background preview options (Black/White/Custom) during review
--   Undo history system for manual background removal (up to 25 states)
--   State preservation for slider positions between regeneration iterations
-
-**Sprite Tester Integration:**
--   Moved sprite tester into `src/sprite_creator/tester/` module
--   Self-contained with all dependencies for standalone release preparation
-
-**Ren'Py Scaffolder:**
--   Added `filtered_image.py` template for advanced image filtering support
-
-**Infrastructure:**
--   Updated `.gitignore` for better project hygiene
--   Updated `requirements.txt` dependencies
-
-### v2.0.0
-
--   **Complete toolkit redesign** for academic use
--   **Tool 1: Ren'Py Project Scaffolder** - Create projects with custom character system
--   **Tool 2: Gemini Character Creator** - AI-powered sprite generation
--   **Tool 3: Visual Scene Editor** - Planned GUI-based scene creation tool
--   Expression sheet generator utility
--   Removed all project-specific references
--   Automatic Ren'Py SDK download and setup
--   Integrated workflow across all tools
--   Clean, production-ready character system injection
--   Updated to Ren'Py 8.5.0
--   Comprehensive documentation and examples
-
-### v1.1.1 (Legacy)
-
--   Original sprite pipeline with 5-step workflow
--   Manual sorting and organization tools
--   Bulk downscaler with gamma-aware processing
--   Expression sheet improvements
-
-### v1.0.0 (Legacy)
-
--   Initial release of sprite pipeline tool
+- google-generativeai
+- Pillow (PIL)
+- PyYAML
+- rembg + onnxruntime (background removal)
+- requests, beautifulsoup4
 
 ---
 
 ## License
 
-This toolkit is provided as-is for educational and personal use.
-
-## Contributing
-
-This is a graduation project, but feedback and suggestions are welcome! Please open an issue on GitHub with any bugs, feature requests, or questions.
+This software is provided as-is for educational and personal use.
 
 ---
 
-**Developed as a graduation project in Computer Science**
-_Making visual novel development accessible to everyone_
+_AI-powered character sprite generation for visual novels_

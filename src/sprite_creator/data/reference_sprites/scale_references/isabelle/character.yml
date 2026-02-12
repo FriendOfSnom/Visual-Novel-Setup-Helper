@@ -1,0 +1,7 @@
+default_outfit: suit
+name_color: '#4faab3'
+poses:
+  a:
+    facing: right
+scale: 0.9
+voice: woman

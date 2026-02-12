@@ -16,7 +16,8 @@ import requests
 from PIL import Image
 from rembg import remove as rembg_remove, new_session as rembg_new_session
 
-from ..constants import CONFIG_PATH, GEMINI_API_URL
+from ..config import CONFIG_PATH, GEMINI_API_URL
+from ..logging_utils import log_api_call, log_debug, log_info, log_warning, log_error
 from .exceptions import GeminiAPIError, GeminiSafetyError
 
 
@@ -128,15 +129,21 @@ def interactive_api_key_setup() -> str:
     return api_key
 
 
-def get_api_key() -> str:
+def get_api_key(use_gui: bool = True) -> str:
     """
     Return Gemini API key from environment variable or config file.
 
     Checks GEMINI_API_KEY environment variable first, then config file.
-    If neither exists, prompts user interactively.
+    If neither exists, prompts user interactively (GUI or CLI).
+
+    Args:
+        use_gui: If True, use GUI dialog for setup. If False, use CLI.
 
     Returns:
         Valid Gemini API key.
+
+    Raises:
+        SystemExit: If no API key is available and user cancels setup.
     """
     # Check environment variable first
     env_key = os.environ.get("GEMINI_API_KEY")
@@ -149,7 +156,18 @@ def get_api_key() -> str:
         return config["api_key"]
 
     # Interactive setup if neither exists
-    return interactive_api_key_setup()
+    if use_gui:
+        try:
+            from ..ui.api_setup import show_api_setup
+            api_key = show_api_setup()
+            if not api_key:
+                raise SystemExit("API key setup cancelled. Exiting.")
+            return api_key
+        except ImportError:
+            # Fall back to CLI if GUI module not available
+            return interactive_api_key_setup()
+    else:
+        return interactive_api_key_setup()
 
 
 # =============================================================================
@@ -379,6 +397,7 @@ def strip_background_ai(
         PNG image bytes with transparent background.
     """
     try:
+        log_debug("Starting AI background removal")
         session = get_rembg_session()
         result = rembg_remove(
             image_bytes,
@@ -401,8 +420,10 @@ def strip_background_ai(
                 passes=passes,
             )
 
+        log_debug("AI background removal completed")
         return result
     except Exception as e:
+        log_warning(f"AI background removal failed: {e}")
         print(f"  [WARN] AI background removal failed, returning original: {e}")
         return image_bytes
 
@@ -521,6 +542,8 @@ def _call_gemini_with_parts(
     max_retries = 3
     last_error = None
 
+    log_debug(f"Gemini API call starting: {context}")
+
     for attempt in range(1, max_retries + 1):
         try:
             response = requests.post(
@@ -532,12 +555,14 @@ def _call_gemini_with_parts(
             # Handle retryable errors
             if not response.ok:
                 if response.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                    log_warning(f"Gemini API error {response.status_code} ({context}) attempt {attempt}, retrying...")
                     print(
                         f"[WARN] Gemini API error {response.status_code} ({context}) "
                         f"attempt {attempt}; retrying..."
                     )
                     last_error = f"Gemini API error {response.status_code}: {response.text}"
                     continue
+                log_api_call(context, False, f"HTTP {response.status_code}: {response.text[:200]}")
                 raise GeminiAPIError(f"Gemini API error {response.status_code}: {response.text}")
 
             data = response.json()
@@ -548,6 +573,7 @@ def _call_gemini_with_parts(
                 finish_reason = candidate.get("finishReason")
                 if finish_reason in ("SAFETY", "IMAGE_SAFETY", "IMAGE_OTHER"):
                     safety_ratings = candidate.get("safetyRatings", [])
+                    log_api_call(context, False, f"Safety blocked: {finish_reason}")
                     raise GeminiSafetyError(
                         f"Content blocked by safety filters ({context}): {finish_reason}",
                         safety_ratings
@@ -556,6 +582,7 @@ def _call_gemini_with_parts(
             raw_bytes = _extract_inline_image_from_response(data)
 
             if raw_bytes is not None:
+                log_api_call(context, True, f"Image received ({len(raw_bytes)} bytes)")
                 if skip_background_removal:
                     return raw_bytes
                 # Apply AI background removal with optional custom settings
@@ -566,16 +593,19 @@ def _call_gemini_with_parts(
                 )
 
             # Log the full response to diagnose why there's no image
+            log_debug(f"Gemini response without image data: {json.dumps(data, indent=2)[:500]}")
             print(f"[DEBUG] Gemini response without image data:")
             print(f"[DEBUG] Full response: {json.dumps(data, indent=2)}")
 
             last_error = f"No image data in Gemini response ({context})."
             if attempt < max_retries:
+                log_warning(f"Gemini response missing image ({context}) attempt {attempt}, retrying...")
                 print(
                     f"[WARN] Gemini response missing image ({context}) "
                     f"attempt {attempt}; retrying..."
                 )
                 continue
+            log_api_call(context, False, "No image data in response")
             raise GeminiAPIError(last_error)
 
         except GeminiSafetyError:
@@ -584,11 +614,13 @@ def _call_gemini_with_parts(
         except Exception as e:
             last_error = str(e)
             if attempt < max_retries:
+                log_warning(f"Gemini call failed ({context}) attempt {attempt}: {e}")
                 print(
                     f"[WARN] Gemini call failed ({context}) "
                     f"attempt {attempt}; retrying: {e}"
                 )
                 continue
+            log_api_call(context, False, f"Failed after {max_retries} attempts: {last_error}")
             raise GeminiAPIError(
                 f"Gemini call failed after {max_retries} attempts ({context}): {last_error}"
             )
@@ -618,12 +650,119 @@ def call_gemini_image_edit(
     Returns:
         Generated/edited image bytes (with transparent background unless skipped).
     """
+    log_info(f"GEMINI: image_edit prompt ({len(prompt)} chars): {prompt[:200]}...")
+    log_debug(f"GEMINI: Full image_edit prompt: {prompt}")
     parts: List[dict] = [
         {"text": prompt},
         {"inline_data": {"mime_type": "image/png", "data": image_b64}},
     ]
     return _call_gemini_with_parts(
         api_key, parts, "image_edit", skip_background_removal,
+        edge_cleanup_tolerance, edge_cleanup_passes
+    )
+
+
+def call_gemini_text(
+    api_key: str,
+    prompt: str,
+    temperature: float = 1.0,
+) -> str:
+    """
+    Call Gemini text API and return the response text.
+
+    Used for generating outfit descriptions dynamically.
+
+    Args:
+        api_key: Google Gemini API key.
+        prompt: Text prompt to send.
+        temperature: Sampling temperature (0.0-2.0, default 1.0).
+
+    Returns:
+        Generated text response.
+
+    Raises:
+        GeminiAPIError: If API call fails.
+    """
+    # Use text model, not image model
+    text_model = "gemini-2.0-flash"
+    text_url = f"https://generativelanguage.googleapis.com/v1beta/models/{text_model}:generateContent"
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": temperature}
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key
+    }
+
+    try:
+        log_info(f"GEMINI: text prompt ({len(prompt)} chars, temp={temperature}): {prompt[:200]}...")
+        log_debug(f"GEMINI: Full text prompt: {prompt}")
+        response = requests.post(text_url, headers=headers, json=payload)
+
+        if not response.ok:
+            log_api_call("text_generation", False, f"HTTP {response.status_code}")
+            raise GeminiAPIError(f"Gemini text API error {response.status_code}: {response.text[:200]}")
+
+        data = response.json()
+
+        # Extract text from response
+        candidates = data.get("candidates", [])
+        if candidates:
+            content = candidates[0].get("content", {})
+            parts = content.get("parts", [])
+            if parts:
+                result = parts[0].get("text", "").strip()
+                log_api_call("text_generation", True, f"Got {len(result)} chars")
+                return result
+
+        log_api_call("text_generation", False, "No text in response")
+        raise GeminiAPIError("No text in Gemini response")
+
+    except GeminiAPIError:
+        raise
+    except Exception as e:
+        log_api_call("text_generation", False, str(e))
+        raise GeminiAPIError(f"Gemini text API call failed: {e}")
+
+
+def call_gemini_fusion(
+    api_key: str,
+    prompt: str,
+    left_image_b64: str,
+    right_image_b64: str,
+    skip_background_removal: bool = False,
+    edge_cleanup_tolerance: Optional[int] = None,
+    edge_cleanup_passes: Optional[int] = None,
+) -> bytes:
+    """
+    Call Gemini image model with two input images for character fusion.
+
+    Creates a new character that combines features from both input images.
+    AI background removal is automatically applied to the result unless skipped.
+
+    Args:
+        api_key: Google Gemini API key.
+        prompt: Text prompt describing the desired fusion.
+        left_image_b64: Base64-encoded left character image.
+        right_image_b64: Base64-encoded right character image.
+        skip_background_removal: If True, return raw image without background removal.
+        edge_cleanup_tolerance: Custom tolerance for edge cleanup (uses default if None).
+        edge_cleanup_passes: Custom passes for edge cleanup (uses default if None).
+
+    Returns:
+        Generated/fused image bytes (with transparent background unless skipped).
+    """
+    log_info(f"GEMINI: fusion prompt ({len(prompt)} chars): {prompt[:200]}...")
+    log_debug(f"GEMINI: Full fusion prompt: {prompt}")
+    parts: List[dict] = [
+        {"text": prompt},
+        {"inline_data": {"mime_type": "image/png", "data": left_image_b64}},
+        {"inline_data": {"mime_type": "image/png", "data": right_image_b64}},
+    ]
+    return _call_gemini_with_parts(
+        api_key, parts, "fusion", skip_background_removal,
         edge_cleanup_tolerance, edge_cleanup_passes
     )
 
@@ -653,6 +792,8 @@ def call_gemini_text_or_refs(
     Returns:
         Generated image bytes (with transparent background unless skipped).
     """
+    log_info(f"GEMINI: text_or_refs prompt ({len(prompt)} chars, refs={len(ref_images) if ref_images else 0}): {prompt[:200]}...")
+    log_debug(f"GEMINI: Full text_or_refs prompt: {prompt}")
     parts: List[dict] = [{"text": prompt}]
 
     # Add reference images if provided

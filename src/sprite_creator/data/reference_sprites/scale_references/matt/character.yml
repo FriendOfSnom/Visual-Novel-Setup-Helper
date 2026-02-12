@@ -1,0 +1,9 @@
+default_outfit: formal
+display_name: Matt
+eye_line: 1.0
+name_color: '#817374'
+poses:
+  a:
+    facing: right
+scale: 1.0
+voice: male

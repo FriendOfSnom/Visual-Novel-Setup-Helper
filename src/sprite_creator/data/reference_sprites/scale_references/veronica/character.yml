@@ -1,0 +1,9 @@
+eye_line: 0.18
+name_color: '#f39121'
+scale: 0.9
+poses:
+  a:
+    facing: right
+  b:
+    facing: right
+    

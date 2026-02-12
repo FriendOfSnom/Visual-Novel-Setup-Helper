@@ -9,11 +9,11 @@ import random
 import sys
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from PIL import Image
 
-from ..constants import (
+from ..config import (
     EXPRESSIONS_SEQUENCE,
     REF_SPRITES_DIR,
     SAFETY_FALLBACK_EXPRESSION_PROMPTS,
@@ -158,6 +158,7 @@ def generate_expressions_for_single_outfit_once(
     edge_cleanup_passes: Optional[int] = None,
     for_interactive_review: bool = False,
     bg_removal_mode: str = "rembg",
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> Union[List[Path], Tuple[List[Path], List[Tuple[bytes, bytes]]]]:
     """
     Generate a full expression set for a single outfit in a single pose.
@@ -192,10 +193,12 @@ def generate_expressions_for_single_outfit_once(
 
     generated_paths: List[Path] = []
     cleanup_data: List[Tuple[bytes, bytes]] = []
+    generated_keys: List[str] = []  # Track which expression keys actually generated
+    failed_keys: List[Tuple[str, str]] = []  # Track (key, desc) of failed expressions
 
     if not outfit_path.is_file() or outfit_path.suffix.lower() not in (".png", ".webp"):
         if for_interactive_review:
-            return (generated_paths, cleanup_data)
+            return (generated_paths, cleanup_data, generated_keys, failed_keys)
         return generated_paths
 
     outfit_name = outfit_path.stem
@@ -223,6 +226,7 @@ def generate_expressions_for_single_outfit_once(
     outfit_img = Image.open(outfit_path).convert("RGBA")
     neutral_path = save_img_webp_or_png(outfit_img, neutral_stem)
     generated_paths.append(neutral_path)
+    generated_keys.append(expressions_sequence[0][0])  # Neutral key (usually "0")
     print(f"  [Expr] Using outfit as neutral '0' -> {neutral_path}")
 
     # For neutral (0), the "original" is the outfit bytes (already has transparent BG)
@@ -232,9 +236,15 @@ def generate_expressions_for_single_outfit_once(
 
     # Generate remaining expressions
     image_b64 = load_image_as_base64(outfit_path)
+    total_expressions = len(expressions_sequence)
 
     for idx, (orig_key, desc) in enumerate(expressions_sequence[1:], start=1):
-        out_stem = out_dir / str(idx)
+        # Use the original key (e.g., "7", "14") not the enumeration index
+        out_stem = out_dir / str(orig_key)
+
+        # Report progress (idx is 1-based after skip neutral)
+        if progress_callback:
+            progress_callback(idx, total_expressions - 1, orig_key)
 
         result = _generate_expression_with_safety_recovery(
             api_key,
@@ -257,14 +267,21 @@ def generate_expressions_for_single_outfit_once(
             else:
                 final_path = save_image_bytes_as_png(result, out_stem)
                 generated_paths.append(final_path)
+            generated_keys.append(orig_key)
             print(
                 f"  [Expr] Saved {pose_dir.name}/{outfit_name} "
-                f"expression '{orig_key}' as '{idx}' -> {final_path}"
+                f"expression '{orig_key}' -> {final_path}"
             )
-        # If result is None, expression was skipped (already logged by helper)
+        else:
+            # Expression was skipped (already logged by helper)
+            failed_keys.append((orig_key, desc))
+            print(
+                f"  [Expr] FAILED {pose_dir.name}/{outfit_name} "
+                f"expression '{orig_key}' ({desc})"
+            )
 
     if for_interactive_review:
-        return (generated_paths, cleanup_data)
+        return (generated_paths, cleanup_data, generated_keys, failed_keys)
     return generated_paths
 
 
@@ -273,7 +290,7 @@ def regenerate_single_expression(
     outfit_path: Path,
     out_dir: Path,
     expressions_sequence: List[Tuple[str, str]],
-    expr_index: int,
+    expr_key: str,
     edge_cleanup_tolerance: Optional[int] = None,
     edge_cleanup_passes: Optional[int] = None,
     bg_removal_mode: str = "rembg",
@@ -281,8 +298,8 @@ def regenerate_single_expression(
     """
     Regenerate a single expression image for one outfit.
 
-    expr_index is the numeric index into expressions_sequence and also
-    the filename stem (0, 1, 2, ...).
+    expr_key is the expression key (e.g., "0", "1", "7", "14") which is also
+    the filename stem.
 
     AI background removal is automatically applied.
 
@@ -291,7 +308,7 @@ def regenerate_single_expression(
         outfit_path: Path to outfit image.
         out_dir: Directory to save expression.
         expressions_sequence: List of expression definitions.
-        expr_index: Index of expression to regenerate.
+        expr_key: Key of expression to regenerate (e.g., "0", "7", "14").
         edge_cleanup_tolerance: Custom tolerance for edge cleanup (uses default if None).
         edge_cleanup_passes: Custom passes for edge cleanup (uses default if None).
 
@@ -301,25 +318,30 @@ def regenerate_single_expression(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Neutral 0 is always just the outfit itself; no need to call Gemini
-    if expr_index == 0:
+    if expr_key == "0":
         outfit_img = Image.open(outfit_path).convert("RGBA")
         neutral_stem = out_dir / "0"
         neutral_path = save_img_webp_or_png(outfit_img, neutral_stem)
         print(f"  [Expr] Regenerated neutral expression 0 -> {neutral_path}")
         return neutral_path
 
-    if expr_index < 0 or expr_index >= len(expressions_sequence):
-        raise ValueError(f"Expression index {expr_index} out of range.")
+    # Find the expression description by key
+    desc = None
+    for key, description in expressions_sequence:
+        if key == expr_key:
+            desc = description
+            break
 
-    expr_key, desc = expressions_sequence[expr_index]
+    if desc is None:
+        raise ValueError(f"Expression key '{expr_key}' not found in expressions_sequence.")
 
     image_b64 = load_image_as_base64(outfit_path)
-    out_stem = out_dir / str(expr_index)
+    out_stem = out_dir / str(expr_key)
 
     img_bytes = _generate_expression_with_safety_recovery(
         api_key,
         image_b64,
-        expr_index,
+        int(expr_key) if expr_key.isdigit() else 0,  # For logging/internal use
         expr_key,
         desc,
         edge_cleanup_tolerance=edge_cleanup_tolerance,
@@ -330,14 +352,14 @@ def regenerate_single_expression(
     if img_bytes:
         final_path = save_image_bytes_as_png(img_bytes, out_stem)
         print(
-            f"  [Expr] Regenerated expression index {expr_index} "
+            f"  [Expr] Regenerated expression '{expr_key}' "
             f"for '{outfit_path.stem}' -> {final_path}"
         )
         return final_path
     else:
         # All recovery attempts failed - raise error for user-initiated regeneration
         raise GeminiSafetyError(
-            f"Expression {expr_index} could not be generated - all recovery attempts failed"
+            f"Expression '{expr_key}' could not be generated - all recovery attempts failed"
         )
 
 
@@ -415,7 +437,7 @@ def generate_and_review_expressions_for_pose(
             for_interactive_review=True,
             bg_removal_mode=outfit_mode,
         )
-        expr_paths_initial, expr_cleanup_data = result
+        expr_paths_initial, expr_cleanup_data, _gen_keys, _fail_keys = result
 
         # Build mapping from path to cleanup_data index
         path_to_cleanup_idx: Dict[Path, int] = {p: i for i, p in enumerate(expr_paths_initial)}
@@ -505,7 +527,7 @@ def generate_and_review_expressions_for_pose(
                     for_interactive_review=True,
                     bg_removal_mode=outfit_mode,
                 )
-                expr_paths_initial, expr_cleanup_data = result
+                expr_paths_initial, expr_cleanup_data, _gen_keys, _fail_keys = result
                 path_to_cleanup_idx = {p: i for i, p in enumerate(expr_paths_initial)}
                 continue
 
@@ -528,12 +550,12 @@ def generate_and_review_expressions_for_pose(
 
                 # Handle regenerate action (with automatic BG removal)
                 if action == "regen_expr":
-                    try:
-                        expr_index = int(expr_paths[idx].stem)
-                    except ValueError:
-                        continue
+                    # Get the expression key from the file stem (e.g., "7" from "7.png")
+                    expr_key = expr_paths[idx].stem
 
-                    if expr_index < 0 or expr_index >= len(expressions_sequence):
+                    # Verify the key exists in expressions_sequence
+                    key_exists = any(key == expr_key for key, _ in expressions_sequence)
+                    if not key_exists:
                         continue
 
                     regenerate_single_expression(
@@ -541,7 +563,7 @@ def generate_and_review_expressions_for_pose(
                         outfit_path,
                         out_dir,
                         expressions_sequence,
-                        expr_index,
+                        expr_key,
                         edge_cleanup_tolerance=outfit_tolerance,
                         edge_cleanup_passes=outfit_passes,
                         bg_removal_mode=outfit_mode,
@@ -574,27 +596,34 @@ def generate_initial_character_from_prompt(
     api_key: str,
     concept: str,
     archetype_label: str,
-    output_root: Path,
+    output_root: Optional[Path] = None,
+    out_stem: Optional[Path] = None,
+    gender_style: Optional[str] = None,
 ) -> Path:
     """
     Use Gemini + reference sprites to generate a base character image
     from a text concept.
 
-    Output path:
+    Output path (if out_stem not provided):
         <output_root>/_prompt_sources/<slug>.png
 
     Args:
         api_key: Gemini API key.
         concept: User's character concept description.
         archetype_label: Character archetype.
-        output_root: Root output directory.
+        output_root: Root output directory (used if out_stem not provided).
+        out_stem: Direct output path stem (without extension).
+        gender_style: Optional gender style override ("f" or "m").
 
     Returns:
         Path to generated character image.
     """
     from ..api.prompt_builders import archetype_to_gender_style
 
-    gender_style = archetype_to_gender_style(archetype_label)
+    # Use provided gender_style or derive from archetype
+    if not gender_style:
+        gender_style = archetype_to_gender_style(archetype_label)
+
     refs = get_reference_images_for_archetype(archetype_label)
     if refs:
         print(f"[INFO] Using {len(refs)} reference sprite(s) for archetype '{archetype_label}'.")
@@ -609,11 +638,18 @@ def generate_initial_character_from_prompt(
     print("[Gemini] Generating new character from text prompt...")
     img_bytes = call_gemini_text_or_refs(api_key, full_prompt, refs)
 
-    rand_token = hex(random.getrandbits(32))[2:]
-    slug = f"{archetype_label.replace(' ', '_')}_{rand_token}"
-    prompt_src_dir = output_root / "_prompt_sources"
-    prompt_src_dir.mkdir(parents=True, exist_ok=True)
-    out_stem = prompt_src_dir / slug
+    # Determine output path
+    if out_stem is None:
+        if output_root is None:
+            raise ValueError("Either out_stem or output_root must be provided")
+        rand_token = hex(random.getrandbits(32))[2:]
+        slug = f"{archetype_label.replace(' ', '_')}_{rand_token}"
+        prompt_src_dir = output_root / "_prompt_sources"
+        prompt_src_dir.mkdir(parents=True, exist_ok=True)
+        out_stem = prompt_src_dir / slug
+    else:
+        # Ensure parent directory exists
+        out_stem.parent.mkdir(parents=True, exist_ok=True)
 
     final_path = save_image_bytes_as_png(img_bytes, out_stem)
 

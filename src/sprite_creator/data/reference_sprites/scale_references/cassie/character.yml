@@ -1,0 +1,12 @@
+eye_line: 0.06
+name_color: '#fffdb5'
+poses:
+  a:
+    facing: right
+    excludes:
+      hat:
+        - casual_c
+  b:
+    facing: right
+scale: 0.9
+voice: girl

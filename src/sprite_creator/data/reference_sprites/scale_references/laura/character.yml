@@ -1,0 +1,13 @@
+default_outfit: suit
+display_name: Laura Morgan
+eye_line: 0.18
+name_color: '#e18b74'
+poses:
+  a:
+    center_width: 237
+    facing: left
+  b:
+    center_width: 143
+    facing: left
+scale: 0.905
+voice: woman

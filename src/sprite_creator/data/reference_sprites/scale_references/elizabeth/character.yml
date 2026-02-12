@@ -1,0 +1,15 @@
+default_outfit: maid
+eye_line: 0.07
+name_color: '#6c6466'
+poses:
+  a:
+    center_width: 246
+    excludes:
+      hairbun:
+        - maid
+        - catsuit
+        - formal
+  b:
+    center_width: 266
+    facing: right
+scale: 0.9
