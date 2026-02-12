@@ -466,17 +466,17 @@ When satisfied with all outfits, click Next to proceed to expression generation.
 
         def update_progress(current: int, total: int, outfit_name: str):
             """Update loading message with current progress."""
-            self.wizard.root.after(0, lambda: self.show_loading(
+            self.schedule_callback(lambda: self.show_loading(
                 f"Generating outfit {current}/{total}: {outfit_name.capitalize()}..."
             ))
 
         def generate():
             try:
                 paths, cleanup_data, used_prompts = self._do_outfit_generation(update_progress)
-                self.wizard.root.after(0, lambda p=paths, c=cleanup_data, u=used_prompts: self._on_generation_complete(p, c, u))
+                self.schedule_callback(lambda p=paths, c=cleanup_data, u=used_prompts: self._on_generation_complete(p, c, u))
             except Exception as e:
                 error_msg = str(e)
-                self.wizard.root.after(0, lambda msg=error_msg: self._on_generation_error(msg))
+                self.schedule_callback(lambda msg=error_msg: self._on_generation_error(msg))
 
         thread = threading.Thread(target=generate, daemon=True)
         thread.start()
@@ -938,10 +938,10 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         def regenerate():
             try:
                 new_path, new_cleanup, used_prompt = self._do_single_regeneration(idx, same_prompt)
-                self.wizard.root.after(0, lambda i=idx, p=new_path, c=new_cleanup, u=used_prompt: self._on_single_regen_complete(i, p, c, u))
+                self.schedule_callback(lambda i=idx, p=new_path, c=new_cleanup, u=used_prompt: self._on_single_regen_complete(i, p, c, u))
             except Exception as e:
                 error_msg = str(e)
-                self.wizard.root.after(0, lambda msg=error_msg: self._on_generation_error(msg))
+                self.schedule_callback(lambda msg=error_msg: self._on_generation_error(msg))
 
         thread = threading.Thread(target=regenerate, daemon=True)
         thread.start()
@@ -1139,10 +1139,10 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         def regenerate():
             try:
                 new_path, new_cleanup, used_prompt = self._do_custom_regeneration(idx, custom_prompt)
-                self.wizard.root.after(0, lambda i=idx, p=new_path, c=new_cleanup, u=used_prompt: self._on_single_regen_complete(i, p, c, u))
+                self.schedule_callback(lambda i=idx, p=new_path, c=new_cleanup, u=used_prompt: self._on_single_regen_complete(i, p, c, u))
             except Exception as e:
                 error_msg = str(e)
-                self.wizard.root.after(0, lambda msg=error_msg: self._on_custom_regen_error(msg))
+                self.schedule_callback(lambda msg=error_msg: self._on_custom_regen_error(msg))
 
         thread = threading.Thread(target=regenerate, daemon=True)
         thread.start()

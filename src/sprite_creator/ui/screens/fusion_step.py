@@ -528,15 +528,15 @@ TROUBLESHOOTING
                 result_img = Image.open(BytesIO(result_bytes)).convert("RGBA")
                 self.state.fusion_result_image = result_img
 
-                # Schedule UI update on main thread
-                self.wizard.root.after(0, lambda: self._on_fusion_complete(result_img))
+                # Schedule UI update on main thread (thread-safe)
+                self.schedule_callback(lambda: self._on_fusion_complete(result_img))
             else:
-                self.wizard.root.after(0, lambda: self._on_fusion_error("No image returned"))
+                self.schedule_callback(lambda: self._on_fusion_error("No image returned"))
 
         except Exception as e:
             error_msg = str(e)
-            log_error("Fusion", error_msg)
-            self.wizard.root.after(0, lambda: self._on_fusion_error(error_msg))
+            log_error(f"Fusion failed: {error_msg}")
+            self.schedule_callback(lambda: self._on_fusion_error(error_msg))
 
     def _on_fusion_complete(self, result_img: Image.Image) -> None:
         """Handle successful fusion generation."""

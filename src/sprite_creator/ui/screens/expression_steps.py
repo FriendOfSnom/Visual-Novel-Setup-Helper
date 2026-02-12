@@ -507,7 +507,7 @@ When adding expressions to existing outfits:
         )
 
         def update_expression_progress(current: int, total_expr: int, expression_name: str):
-            self.wizard.root.after(0, lambda: self.show_loading(
+            self.schedule_callback(lambda: self.show_loading(
                 f"Outfit {outfit_num}/{total}: {outfit_name}\n"
                 f"Expression {current}/{total_expr}: {expression_name.replace('_', ' ').title()}"
             ))
@@ -515,10 +515,10 @@ When adding expressions to existing outfits:
         def generate():
             try:
                 expr_paths, cleanup_dict = self._do_expression_generation(outfit_name, update_expression_progress)
-                self.wizard.root.after(0, lambda n=outfit_name, p=expr_paths, c=cleanup_dict: self._on_selective_outfit_complete(n, p, c))
+                self.schedule_callback(lambda n=outfit_name, p=expr_paths, c=cleanup_dict: self._on_selective_outfit_complete(n, p, c))
             except Exception as e:
                 error_msg = str(e)
-                self.wizard.root.after(0, lambda msg=error_msg: self._on_generation_error(msg))
+                self.schedule_callback(lambda msg=error_msg: self._on_generation_error(msg))
 
         thread = threading.Thread(target=generate, daemon=True)
         thread.start()
@@ -579,7 +579,7 @@ When adding expressions to existing outfits:
 
         def update_expression_progress(current: int, total: int, expression_name: str):
             """Update loading message with per-expression progress."""
-            self.wizard.root.after(0, lambda: self.show_loading(
+            self.schedule_callback(lambda: self.show_loading(
                 f"Outfit {outfit_num}/{total_outfits}: {outfit_name}\n"
                 f"Expression {current}/{total}: {expression_name.replace('_', ' ').title()}"
             ))
@@ -587,10 +587,10 @@ When adding expressions to existing outfits:
         def generate():
             try:
                 expr_paths, cleanup_dict = self._do_expression_generation(outfit_name, update_expression_progress)
-                self.wizard.root.after(0, lambda n=outfit_name, p=expr_paths, c=cleanup_dict: self._on_outfit_expressions_complete(n, p, c))
+                self.schedule_callback(lambda n=outfit_name, p=expr_paths, c=cleanup_dict: self._on_outfit_expressions_complete(n, p, c))
             except Exception as e:
                 error_msg = str(e)
-                self.wizard.root.after(0, lambda msg=error_msg: self._on_generation_error(msg))
+                self.schedule_callback(lambda msg=error_msg: self._on_generation_error(msg))
 
         thread = threading.Thread(target=generate, daemon=True)
         thread.start()
@@ -723,7 +723,7 @@ When adding expressions to existing outfits:
 
         def update_expression_progress(current: int, total: int, expression_name: str):
             """Update loading message with per-expression progress."""
-            self.wizard.root.after(0, lambda: self.show_loading(
+            self.schedule_callback(lambda: self.show_loading(
                 f"Outfit {current_num}/{total_outfits}: Pose {pose_letter.upper()}\n"
                 f"Expression {current}/{total}: {expression_name.replace('_', ' ').title()}"
             ))
@@ -733,10 +733,10 @@ When adding expressions to existing outfits:
                 expr_paths, cleanup_dict = self._do_existing_outfit_expression_generation(
                     pose_letter, expressions_to_add, update_expression_progress
                 )
-                self.wizard.root.after(0, lambda n=existing_name, p=expr_paths, c=cleanup_dict: self._on_existing_outfit_complete(n, p, c))
+                self.schedule_callback(lambda n=existing_name, p=expr_paths, c=cleanup_dict: self._on_existing_outfit_complete(n, p, c))
             except Exception as e:
                 error_msg = str(e)
-                self.wizard.root.after(0, lambda msg=error_msg: self._on_generation_error(msg))
+                self.schedule_callback(lambda msg=error_msg: self._on_generation_error(msg))
 
         thread = threading.Thread(target=generate, daemon=True)
         thread.start()
@@ -1324,14 +1324,13 @@ When adding expressions to existing outfits:
         def regenerate():
             try:
                 new_path, orig_bytes, rembg_bytes = self._do_single_expression_regen(outfit_name, expr_key)
-                self.wizard.root.after(
-                    0,
+                self.schedule_callback(
                     lambda o=outfit_name, e=expr_key, p=new_path, ob=orig_bytes, rb=rembg_bytes:
                         self._on_single_expr_complete(o, e, p, ob, rb)
                 )
             except Exception as e:
                 error_msg = str(e)
-                self.wizard.root.after(0, lambda msg=error_msg: self._on_generation_error(msg))
+                self.schedule_callback(lambda msg=error_msg: self._on_generation_error(msg))
 
         thread = threading.Thread(target=regenerate, daemon=True)
         thread.start()

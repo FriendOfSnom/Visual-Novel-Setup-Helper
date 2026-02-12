@@ -114,6 +114,9 @@ class DisclaimerWindow:
         new_h = int(int(h) * 1.15)  # 15% taller
         self.root.geometry(f"{w}x{new_h}+{parts[1]}+{parts[2]}")
 
+        # Ensure checkbox + buttons are always visible regardless of screen DPI
+        self.root.minsize(480, 400)
+
         self._accepted = False
         self._checkbox_var = tk.BooleanVar(value=False)
 

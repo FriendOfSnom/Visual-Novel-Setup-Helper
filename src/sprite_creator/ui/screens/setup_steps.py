@@ -602,14 +602,14 @@ After selecting, click Next to continue."""
             if result_bytes:
                 result_img = Image.open(BytesIO(result_bytes)).convert("RGBA")
                 self.state.fusion_result_image = result_img
-                self.wizard.root.after(0, lambda: self._on_fusion_complete(result_img))
+                self.schedule_callback(lambda: self._on_fusion_complete(result_img))
             else:
-                self.wizard.root.after(0, lambda: self._on_fusion_error("No image returned"))
+                self.schedule_callback(lambda: self._on_fusion_error("No image returned"))
 
         except Exception as e:
             error_msg = str(e)
-            log_error("Fusion", error_msg)
-            self.wizard.root.after(0, lambda: self._on_fusion_error(error_msg))
+            log_error(f"Fusion failed: {error_msg}")
+            self.schedule_callback(lambda: self._on_fusion_error(error_msg))
 
     def _on_fusion_complete(self, result_img: Image.Image) -> None:
         """Handle successful fusion."""
@@ -1365,15 +1365,15 @@ Click Next when your character looks right."""
                 self._generated_image = Image.open(BytesIO(result_bytes)).convert("RGBA")
                 log_generation_complete("character_from_text", True)
                 # Schedule UI update on main thread
-                self._crop_canvas.after(0, self._on_generation_complete)
+                self.schedule_callback(self._on_generation_complete)
             else:
                 log_generation_complete("character_from_text", False, "No image returned")
-                self._crop_canvas.after(0, lambda: self._on_generation_error("No image returned"))
+                self.schedule_callback(lambda: self._on_generation_error("No image returned"))
 
         except Exception as e:
             error_msg = str(e)
             log_generation_complete("character_from_text", False, error_msg)
-            self._crop_canvas.after(0, lambda: self._on_generation_error(error_msg))
+            self.schedule_callback(lambda: self._on_generation_error(error_msg))
 
     def _on_generation_complete(self) -> None:
         """Handle successful generation."""
@@ -1678,13 +1678,13 @@ Click Next when your character looks right."""
                 # Convert bytes to PIL Image
                 modified_image = Image.open(BytesIO(result_bytes)).convert("RGBA")
                 # Schedule UI update on main thread
-                self.wizard.root.after(0, lambda img=modified_image: self._on_modification_complete(img))
+                self.schedule_callback(lambda img=modified_image: self._on_modification_complete(img))
             else:
-                self.wizard.root.after(0, lambda: self._on_modification_error("No image returned"))
+                self.schedule_callback(lambda: self._on_modification_error("No image returned"))
 
         except Exception as e:
             error_msg = str(e)
-            self.wizard.root.after(0, lambda: self._on_modification_error(error_msg))
+            self.schedule_callback(lambda: self._on_modification_error(error_msg))
 
     def _on_modification_complete(self, modified_image: Image.Image) -> None:
         """Handle successful modification."""
@@ -1981,8 +1981,10 @@ Click Next when your character looks right."""
         """
         Check if a pose directory contains original ST format (head-only faces).
 
-        Original ST faces are head overlays (roughly square or wider than tall).
-        Sprite Creator faces are complete characters (much taller than wide, ~2:1 ratio).
+        Original ST faces are head overlays that only occupy a portion of the canvas.
+        Some characters pad their face images to match outfit canvas size, so we
+        can't rely on canvas dimensions alone. Instead, we check how much of the
+        canvas height the actual visible content occupies.
 
         Returns True if this is an original ST pose with head-only faces.
         """
@@ -1997,11 +1999,27 @@ Click Next when your character looks right."""
                 if face_path.exists():
                     try:
                         with Image.open(face_path) as img:
+                            img = img.convert("RGBA")
                             w, h = img.size
-                            # Head-only if not significantly taller than wide
-                            # Full character sprites are typically 2:1 or more (h > w * 1.3)
-                            is_head_only = h < w * 1.3
-                            return is_head_only
+
+                            # Quick check: if clearly not tall, it's head-only
+                            if h < w * 1.3:
+                                return True
+
+                            # Content-based check for padded face images:
+                            # Threshold the alpha channel to ignore artifact pixels,
+                            # then check what % of the canvas height has real content.
+                            alpha = img.split()[3]
+                            thresh = alpha.point(lambda p: 255 if p > 50 else 0)
+                            bbox = thresh.getbbox()
+
+                            if not bbox:
+                                return False
+
+                            content_height = bbox[3] - bbox[1]
+                            # Head-only overlays typically fill <50% of canvas height.
+                            # Full character sprites fill 70%+ of canvas height.
+                            return content_height < h * 0.5
                     except Exception:
                         pass
         return False
@@ -2058,10 +2076,19 @@ Click Next when your character looks right."""
             return contenders
 
         # Get list of outfits (sorted alphabetically)
-        outfits = sorted([
-            f for f in outfits_dir.iterdir()
-            if f.suffix.lower() in [".png", ".webp"]
-        ])
+        # Supports both flat files (outfits/casual.webp) and ST subdirectories
+        # (outfits/casual/casual.webp) where the main image matches the folder name
+        outfits = []
+        for item in sorted(outfits_dir.iterdir()):
+            if item.is_file() and item.suffix.lower() in [".png", ".webp"]:
+                outfits.append(item)
+            elif item.is_dir():
+                # ST format: outfit subdir contains <name>.<ext> as the main image
+                for ext in [".webp", ".png"]:
+                    candidate = item / f"{item.name}{ext}"
+                    if candidate.exists():
+                        outfits.append(candidate)
+                        break
 
         # Get list of numeric faces (sorted by number)
         faces = sorted([
@@ -2327,12 +2354,12 @@ Click Next when your character looks right."""
 
             if result_bytes:
                 normalized = Image.open(BytesIO(result_bytes)).convert("RGBA")
-                self.wizard.root.after(0, lambda: self._on_normalize_complete(normalized))
+                self.schedule_callback(lambda: self._on_normalize_complete(normalized))
             else:
-                self.wizard.root.after(0, lambda: self._on_normalize_error("No image returned from API"))
+                self.schedule_callback(lambda: self._on_normalize_error("No image returned from API"))
 
         except Exception as e:
-            self.wizard.root.after(0, lambda: self._on_normalize_error(str(e)))
+            self.schedule_callback(lambda: self._on_normalize_error(str(e)))
 
     def _on_normalize_complete(self, normalized_image: Image.Image) -> None:
         """Handle successful normalization (main thread)."""

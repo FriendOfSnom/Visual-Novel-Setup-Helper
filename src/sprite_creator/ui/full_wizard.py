@@ -12,10 +12,11 @@ Usage:
         print(f"Character created at: {result.character_folder}")
 """
 
+import queue
 import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
-from typing import Dict, List, Optional, Type
+from typing import Callable, Dict, List, Optional, Type
 
 from ..config import (
     BG_COLOR,
@@ -93,6 +94,11 @@ class FullWizard:
         # Result tracking
         self._cancelled = False
         self._completed = False
+
+        # Thread-safe callback queue: background threads put callbacks here
+        # instead of calling root.after() directly (which is not thread-safe
+        # and can silently fail on some Windows systems).
+        self._callback_queue: queue.Queue = queue.Queue()
 
         self._build_ui()
 
@@ -433,6 +439,30 @@ class FullWizard:
             self._loading_frame.place_forget()
         self.root.update()
 
+    def schedule_callback(self, callback: Callable) -> None:
+        """
+        Schedule a callback to run on the main (UI) thread.
+
+        Background threads must use this instead of root.after() to avoid
+        tkinter thread-safety issues that can cause silent hangs on some
+        Windows systems.
+
+        Args:
+            callback: Zero-argument callable to run on the main thread.
+        """
+        self._callback_queue.put(callback)
+
+    def _process_callback_queue(self) -> None:
+        """Process pending callbacks from background threads (runs on main thread)."""
+        try:
+            while True:
+                callback = self._callback_queue.get_nowait()
+                callback()
+        except queue.Empty:
+            pass
+        # Re-schedule self every 100ms
+        self.root.after(100, self._process_callback_queue)
+
     def _on_cancel(self) -> None:
         """Handle cancel button or window close."""
         # Force focus to root window to ensure messagebox appears properly
@@ -490,6 +520,9 @@ class FullWizard:
 
         # Show first step
         self._show_step(0)
+
+        # Start processing thread-safe callback queue
+        self._process_callback_queue()
 
         # Run main loop
         self.root.mainloop()

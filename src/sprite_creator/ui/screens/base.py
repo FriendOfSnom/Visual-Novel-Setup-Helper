@@ -178,6 +178,16 @@ class WizardStep(ABC):
         if self.wizard:
             self.wizard.hide_loading()
 
+    def schedule_callback(self, callback) -> None:
+        """
+        Schedule a callback on the main thread (thread-safe).
+
+        Background threads must use this instead of self.wizard.root.after()
+        to avoid tkinter thread-safety issues on some Windows systems.
+        """
+        if self.wizard:
+            self.wizard.schedule_callback(callback)
+
     def update_display(self) -> None:
         """
         Refresh the step's display from current state.

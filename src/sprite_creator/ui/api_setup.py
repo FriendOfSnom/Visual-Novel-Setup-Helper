@@ -6,6 +6,7 @@ replacing the CLI-based interactive setup.
 """
 
 import json
+import queue
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -115,7 +116,11 @@ class APISetupWindow:
         self._result_key: Optional[str] = None
         self._is_validating = False
 
+        # Thread-safe callback queue (same pattern as FullWizard)
+        self._callback_queue: queue.Queue = queue.Queue()
+
         self._build_ui()
+        self._start_callback_processor()
 
         # Center on parent if toplevel and set up modal behavior
         if self._is_toplevel and parent:
@@ -146,6 +151,25 @@ class APISetupWindow:
                     pass  # Window was closed
 
             self.root.after(50, setup_modal)
+
+    def _start_callback_processor(self):
+        """Start processing the thread-safe callback queue."""
+        try:
+            while True:
+                callback = self._callback_queue.get_nowait()
+                callback()
+        except queue.Empty:
+            pass
+        # Only continue polling if window still exists
+        try:
+            if self.root.winfo_exists():
+                self.root.after(100, self._start_callback_processor)
+        except tk.TclError:
+            pass
+
+    def _schedule_callback(self, callback):
+        """Schedule a callback on the main thread (thread-safe)."""
+        self._callback_queue.put(callback)
 
     def _build_ui(self):
         """Build the API setup UI."""
@@ -408,8 +432,8 @@ class APISetupWindow:
         # Run validation in background thread to keep UI responsive
         def validate_in_thread():
             success, message = self._validate_api_key(api_key)
-            # Schedule callback on main thread
-            self.root.after(0, lambda: self._on_validation_complete(api_key, success, message))
+            # Schedule callback on main thread (thread-safe)
+            self._schedule_callback(lambda: self._on_validation_complete(api_key, success, message))
 
         thread = threading.Thread(target=validate_in_thread, daemon=True)
         thread.start()

@@ -741,12 +741,20 @@ Click Next when the scale looks right."""
             outfit_path = None
             face_path = None
 
-            # Find first outfit image
+            # Find first outfit image (supports flat files and ST subdirectories)
             outfits_dir = pose_dir / "outfits"
             if outfits_dir.is_dir():
-                for f in sorted(outfits_dir.iterdir()):
-                    if f.suffix.lower() in [".png", ".webp"]:
-                        outfit_path = f
+                for item in sorted(outfits_dir.iterdir()):
+                    if item.is_file() and item.suffix.lower() in [".png", ".webp"]:
+                        outfit_path = item
+                        break
+                    elif item.is_dir():
+                        for ext in [".webp", ".png"]:
+                            candidate = item / f"{item.name}{ext}"
+                            if candidate.exists():
+                                outfit_path = candidate
+                                break
+                    if outfit_path:
                         break
 
             # Find first face image
@@ -1077,47 +1085,93 @@ Click Finish to close the wizard."""
     def __init__(self, wizard, state: WizardState):
         super().__init__(wizard, state)
         self._summary_frame: Optional[tk.Frame] = None
+        self._guide_text: Optional[tk.Text] = None
         self._actions_frame: Optional[tk.Frame] = None
         self._finalized = False  # Track if finalization has already run
 
     def build_ui(self, parent: tk.Frame) -> None:
         parent.configure(bg=BG_COLOR)
 
-        # Title
+        # Title row with checkmark
+        title_row = tk.Frame(parent, bg=BG_COLOR)
+        title_row.pack(fill="x", pady=(0, 16))
+
         tk.Label(
-            parent,
+            title_row,
+            text="✓ ",
+            bg=BG_COLOR,
+            fg="#44bb44",
+            font=PAGE_TITLE_FONT,
+        ).pack(side="left", padx=(40, 0))
+
+        tk.Label(
+            title_row,
             text="Character Creation Complete!",
             bg=BG_COLOR,
             fg=ACCENT_COLOR,
             font=PAGE_TITLE_FONT,
-        ).pack(pady=(0, 24))
+        ).pack(side="left")
 
-        # Success icon/message
-        tk.Label(
-            parent,
-            text="✓",
-            bg=BG_COLOR,
-            fg="#44bb44",
-            font=("", 48),
-        ).pack()
-
-        # Two-column layout
+        # Three-column layout
         content_frame = tk.Frame(parent, bg=BG_COLOR)
-        content_frame.pack(fill="both", expand=True, padx=40, pady=(24, 0))
+        content_frame.pack(fill="both", expand=True, padx=20, pady=(8, 0))
 
         # Left column - Summary info
-        left_col = tk.Frame(content_frame, bg=BG_COLOR)
-        left_col.pack(side="left", fill="both", expand=True, padx=(0, 16))
+        left_col = tk.Frame(content_frame, bg=BG_COLOR, width=240)
+        left_col.pack(side="left", fill="y", padx=(0, 8))
+        left_col.pack_propagate(False)
 
-        self._summary_frame = tk.Frame(left_col, bg=CARD_BG, padx=24, pady=16)
+        self._summary_frame = tk.Frame(left_col, bg=CARD_BG, padx=16, pady=12)
         self._summary_frame.pack(fill="both", expand=True)
 
-        # Right column - Action buttons
-        right_col = tk.Frame(content_frame, bg=BG_COLOR)
-        right_col.pack(side="right", fill="y", padx=(16, 0))
+        # Middle column - ST Usage Guide (scrollable)
+        mid_col = tk.Frame(content_frame, bg=BG_COLOR)
+        mid_col.pack(side="left", fill="both", expand=True, padx=8)
 
-        self._actions_frame = tk.Frame(right_col, bg=CARD_BG, padx=24, pady=16)
-        self._actions_frame.pack(fill="x")
+        guide_card = tk.Frame(mid_col, bg=CARD_BG, padx=16, pady=12)
+        guide_card.pack(fill="both", expand=True)
+
+        tk.Label(
+            guide_card,
+            text="Using in Student Transfer",
+            bg=CARD_BG,
+            fg=TEXT_COLOR,
+            font=SECTION_FONT,
+        ).pack(anchor="w", pady=(0, 8))
+
+        guide_inner = tk.Frame(guide_card, bg=CARD_BG)
+        guide_inner.pack(fill="both", expand=True)
+
+        self._guide_text = tk.Text(
+            guide_inner,
+            wrap="word",
+            bg="#1E1E1E",
+            fg=TEXT_SECONDARY,
+            font=("Consolas", 9),
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground="#444444",
+            padx=10,
+            pady=10,
+            state="disabled",
+        )
+        guide_scroll = ttk.Scrollbar(guide_inner, orient="vertical", command=self._guide_text.yview)
+        self._guide_text.configure(yscrollcommand=guide_scroll.set)
+        self._guide_text.pack(side="left", fill="both", expand=True)
+        guide_scroll.pack(side="right", fill="y")
+
+        copy_btn = create_secondary_button(
+            guide_card, "Copy to Clipboard", self._copy_guide_to_clipboard, width=16
+        )
+        copy_btn.pack(anchor="e", pady=(8, 0))
+
+        # Right column - Action buttons
+        right_col = tk.Frame(content_frame, bg=BG_COLOR, width=180)
+        right_col.pack(side="right", fill="y", padx=(8, 0))
+        right_col.pack_propagate(False)
+
+        self._actions_frame = tk.Frame(right_col, bg=CARD_BG, padx=16, pady=12)
+        self._actions_frame.pack(fill="both", expand=True)
 
     def on_leave(self) -> None:
         """Reset finalized flag when navigating back so re-entry re-finalizes."""
@@ -1138,17 +1192,17 @@ Click Finish to close the wizard."""
         def do_finalize():
             try:
                 self._finalize_character()
-                self.wizard.root.after(0, self._on_finalization_complete)
+                self.schedule_callback(self._on_finalization_complete)
             except Exception as e:
                 msg = str(e)
-                self.wizard.root.after(0, lambda m=msg: self._on_finalization_error(m))
+                self.schedule_callback(lambda m=msg: self._on_finalization_error(m))
 
         import threading
         threading.Thread(target=do_finalize, daemon=True).start()
 
     def _update_progress(self, message: str) -> None:
         """Thread-safe progress update during finalization."""
-        self.wizard.root.after(0, lambda: self.show_loading(message))
+        self.schedule_callback(lambda: self.show_loading(message))
 
     def _on_finalization_complete(self) -> None:
         """Handle finalization completion on the main thread."""
@@ -1288,6 +1342,14 @@ Click Finish to close the wizard."""
             width=20,
         ).pack(pady=(0, 8))
 
+        # === MIDDLE COLUMN: ST Usage Guide ===
+        if self._guide_text:
+            guide_content = self._build_usage_guide()
+            self._guide_text.configure(state="normal")
+            self._guide_text.delete("1.0", "end")
+            self._guide_text.insert("1.0", guide_content)
+            self._guide_text.configure(state="disabled")
+
     def _add_row(self, label: str, value: str) -> None:
         """Add a summary row."""
         row = tk.Frame(self._summary_frame, bg=CARD_BG)
@@ -1347,6 +1409,160 @@ Click Finish to close the wizard."""
             font=BODY_FONT,
             anchor="w",
         ).pack(side="left")
+
+    def _build_usage_guide(self) -> str:
+        """Build the ST usage guide text dynamically from character data."""
+        char_folder = self.state.character_folder
+        name = char_folder.name if char_folder else "character"
+        display = self.state.display_name or name
+
+        # Discover all pose letters and their outfit names from the finalized folder
+        all_pose_outfits = {}  # letter -> outfit name
+        if char_folder and char_folder.exists():
+            for d in sorted(char_folder.iterdir()):
+                if d.is_dir() and len(d.name) == 1 and d.name.isalpha():
+                    letter = d.name
+                    outfit_name = letter  # fallback
+                    outfits_dir = d / "outfits"
+                    if outfits_dir.is_dir():
+                        for item in sorted(outfits_dir.iterdir()):
+                            if item.is_file() and item.suffix.lower() in ('.png', '.webp'):
+                                outfit_name = item.stem
+                                break
+                            elif item.is_dir():
+                                outfit_name = item.name
+                                break
+                    all_pose_outfits[letter] = outfit_name
+
+        # Read sprite_creator_poses from character.yml to distinguish SC vs original poses
+        sc_poses = set()
+        yml_path = char_folder / "character.yml" if char_folder else None
+        if yml_path and yml_path.exists():
+            try:
+                with yml_path.open("r", encoding="utf-8") as f:
+                    char_data = yaml.safe_load(f) or {}
+                sc_poses = set(char_data.get("sprite_creator_poses", []))
+            except Exception:
+                pass
+
+        # If no SC poses recorded (shouldn't happen), treat all as SC
+        if not sc_poses:
+            sc_poses = set(all_pose_outfits.keys())
+
+        # Split into original ST poses and AI-generated poses
+        original_poses = {k: v for k, v in all_pose_outfits.items() if k not in sc_poses}
+        ai_poses = {k: v for k, v in all_pose_outfits.items() if k in sc_poses}
+
+        first_ai_letter = list(ai_poses.keys())[0] if ai_poses else "a"
+        expressions = self.state.expressions_sequence or []
+
+        lines = []
+        lines.append(f'USING "{display}" IN STUDENT TRANSFER')
+        lines.append("=" * len(lines[0]))
+        lines.append("")
+        lines.append(f"Code name: {name}")
+        lines.append("")
+
+        # Add compatibility note if there are both original and AI poses
+        if original_poses and ai_poses:
+            lines.append("POSE COMPATIBILITY")
+            lines.append("-" * 40)
+            orig_range = ", ".join(sorted(original_poses.keys()))
+            ai_range = ", ".join(sorted(ai_poses.keys()))
+            lines.append(f"Poses {orig_range} are standard ST poses.")
+            lines.append("  These work normally with all ST commands")
+            lines.append("  including 'outfit', 'accessory', etc.")
+            lines.append("")
+            lines.append(f"Poses {ai_range} are AI-generated poses.")
+            lines.append("  These use transparent outfit layers and")
+            lines.append("  work differently - see details below.")
+            lines.append("")
+
+        # Setup (only for new characters, not add-to-existing)
+        if not original_poses:
+            lines.append("SETUP")
+            lines.append("-" * 40)
+            lines.append(f'Copy the "{name}" folder to:')
+            lines.append(f"  game/characters/{name}/")
+            lines.append("")
+
+        # Show
+        lines.append("SHOWING THE CHARACTER")
+        lines.append("-" * 40)
+        lines.append(f"  show {name} {first_ai_letter}_0 at center")
+        lines.append(f"  with dissolve")
+        lines.append("")
+
+        # Expressions
+        if expressions:
+            lines.append("EXPRESSIONS")
+            lines.append("-" * 40)
+            lines.append("Change the number to change the expression:")
+            for i, (key, desc) in enumerate(expressions):
+                lines.append(f"  show {name} {first_ai_letter}_{i}    # {desc}")
+            lines.append("")
+
+        # Outfits - the critical difference from standard ST
+        if len(ai_poses) > 1:
+            lines.append("CHANGING OUTFITS (IMPORTANT)")
+            lines.append("-" * 40)
+            lines.append("DO NOT use the 'outfit' command with")
+            lines.append("AI-generated poses. The outfit layer is")
+            lines.append("transparent, so it has no visible effect.")
+            lines.append("")
+            lines.append("Instead, change the POSE LETTER:")
+            for letter, outfit_name in ai_poses.items():
+                lines.append(f"  show {name} {letter}_0    # {outfit_name}")
+            lines.append("")
+        elif len(ai_poses) == 1:
+            lines.append("OUTFITS")
+            lines.append("-" * 40)
+            letter, outfit_name = next(iter(ai_poses.items()))
+            lines.append(f"This character has one AI outfit ({outfit_name}).")
+            lines.append("DO NOT use the 'outfit' command - the outfit")
+            lines.append("layer is transparent for AI-generated poses.")
+            lines.append("")
+
+        # Positioning
+        lines.append("POSITIONING")
+        lines.append("-" * 40)
+        lines.append(f"  show {name} {first_ai_letter}_0 at left")
+        lines.append(f"  show {name} {first_ai_letter}_0 at centerleft")
+        lines.append(f"  show {name} {first_ai_letter}_0 at center")
+        lines.append(f"  show {name} {first_ai_letter}_0 at centerright")
+        lines.append(f"  show {name} {first_ai_letter}_0 at right")
+        lines.append("")
+
+        # Facing direction
+        lines.append("FACING DIRECTION")
+        lines.append("-" * 40)
+        lines.append(f"  show {name} {first_ai_letter}_0 at center, faceleft")
+        lines.append(f"  show {name} {first_ai_letter}_0 at centerright, faceright")
+        lines.append("")
+
+        # Hiding
+        lines.append("HIDING")
+        lines.append("-" * 40)
+        lines.append(f"  hide {name}")
+        lines.append(f"  with dissolve")
+        lines.append("")
+
+        # Animated entrance
+        lines.append("ANIMATED ENTRANCE")
+        lines.append("-" * 40)
+        lines.append(f"  show {name} {first_ai_letter}_0 at centerleft")
+        lines.append(f"  with easeinleft")
+        lines.append("")
+
+        return "\n".join(lines)
+
+    def _copy_guide_to_clipboard(self) -> None:
+        """Copy the ST usage guide text to the clipboard."""
+        if self._guide_text:
+            text = self._guide_text.get("1.0", "end-1c")
+            if text.strip():
+                self.wizard.root.clipboard_clear()
+                self.wizard.root.clipboard_append(text)
 
     def _open_sprite_tester(self) -> None:
         """Launch the sprite tester for this character."""

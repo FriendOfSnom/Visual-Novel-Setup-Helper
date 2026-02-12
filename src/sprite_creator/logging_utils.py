@@ -159,14 +159,17 @@ def log_warning(message: str) -> None:
     get_logger().warning(message)
 
 
-def log_error(message: str, exc_info: bool = False) -> None:
+def log_error(message: str, detail: str = "", exc_info: bool = False) -> None:
     """
     Log an error message.
 
     Args:
-        message: The error message
+        message: The error message (or context label if detail is provided)
+        detail: Optional detail string appended after ": "
         exc_info: If True, include exception traceback
     """
+    if detail:
+        message = f"{message}: {detail}"
     get_logger().error(message, exc_info=exc_info)
 
 

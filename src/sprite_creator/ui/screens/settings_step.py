@@ -462,15 +462,15 @@ For characters NOT created by Sprite Creator:
                 self._normalized_image = Image.open(BytesIO(result_bytes)).convert("RGBA")
                 # Store in state for SetupStep to use
                 self.state.normalized_image = self._normalized_image
-                # Schedule UI update on main thread
-                self.wizard.root.after(0, self._on_normalization_complete)
+                # Schedule UI update on main thread (thread-safe)
+                self.schedule_callback(self._on_normalization_complete)
             else:
-                self.wizard.root.after(0, lambda: self._on_normalization_error("No image returned"))
+                self.schedule_callback(lambda: self._on_normalization_error("No image returned"))
 
         except Exception as e:
             error_msg = str(e)
-            log_error("Normalization", error_msg)
-            self.wizard.root.after(0, lambda: self._on_normalization_error(error_msg))
+            log_error(f"Normalization failed: {error_msg}")
+            self.schedule_callback(lambda: self._on_normalization_error(error_msg))
 
     def _on_normalization_complete(self) -> None:
         """Handle successful normalization."""
@@ -487,7 +487,7 @@ For characters NOT created by Sprite Creator:
         self._is_normalizing = False
         self.hide_loading()
         self._status_label.configure(text=f"Normalization skipped: {error[:40]}...", fg="#FFB347")
-        log_error("Normalization", f"Failed, continuing with original: {error}")
+        log_error(f"Normalization failed, continuing with original: {error}")
 
         # Set normalized_image to None so SetupStep falls back to original
         self.state.normalized_image = None

@@ -797,16 +797,15 @@ def build_standard_school_uniform_prompt(
     if gender_style == "f":
         uniform_desc = (
             "a vibrant navy blue sleeveless blazer with a traditional waistcoat-style hem, outlined with thin gold piping along the lapels and bottom edge. "
-            "The vest has no emblems or crests on it. "
+            "There is no emblem on the chest, instead there is A gold/orange rectangular school crest patch on the left sleeve only. "
             "Four gold buttons in a double-breasted 2x2 arrangement positioned at the waist. "
             "Underneath is a white short-sleeved collared dress shirt with thin blue piping around the collar. "
-            "A rectangular gold/orange vertical school crest patch on the left sleeve of the white shirt. "
             "A solid red necktie with no pattern. "
             "A short vibrant magenta-red plaid pleated skirt with a tartan pattern and gold trim at the bottom hem"
         )
     else:
         uniform_desc = (
-            "a white short-sleeved collared dress shirt with thin dark piping on the collar edge and a small chest pocket on the left breast. "
+            "a white short-sleeved collared dress shirt with thin dark piping on the collar edge. "
             "A gold/orange rectangular school crest patch on the left sleeve only. "
             "A solid red necktie with two thin horizontal silver stripes. "
             "Dark navy blue dress trousers with a dark brown leather belt with a gold rectangular buckle. "
