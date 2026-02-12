@@ -8,7 +8,7 @@ character creation process.
 from .base import WizardStep
 # Re-export WizardState from core for backward compatibility
 from ...core.models import WizardState
-from .setup_steps import SourceStep, CharacterStep, OptionsStep
+from .setup_steps import SourceStep, SetupStep, OptionsStep
 from .generation_steps import ReviewStep
 from .outfit_steps import OutfitReviewStep
 from .expression_steps import ExpressionReviewStep
@@ -18,9 +18,9 @@ __all__ = [
     # Base classes
     "WizardStep",
     "WizardState",
-    # Setup steps (1-3) - crop now in CharacterStep
+    # Setup steps (1-3) - crop now in SetupStep
     "SourceStep",
-    "CharacterStep",
+    "SetupStep",
     "OptionsStep",
     # Generation steps
     "ReviewStep",

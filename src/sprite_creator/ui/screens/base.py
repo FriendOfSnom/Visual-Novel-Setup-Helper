@@ -35,6 +35,7 @@ class WizardStep(ABC):
     # Step metadata - override in subclasses
     STEP_ID: str = "base"
     STEP_TITLE: str = "Base Step"
+    STEP_NUMBER: int = 0  # Hardcoded step number for consistent display
     STEP_HELP: str = "Override this help text in subclass."
 
     def __init__(self, wizard: "FullWizard", state: WizardState):

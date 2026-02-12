@@ -40,6 +40,7 @@ from .tk_common import (
     show_help_modal,
 )
 from .screens.base import WizardStep, WizardState
+from ..logging_utils import log_info, log_warning
 
 
 class FullWizard:
@@ -168,7 +169,7 @@ class FullWizard:
 
             label = tk.Label(
                 step_frame,
-                text=f"({i+1}) {step.STEP_TITLE}",
+                text=f"({step.STEP_NUMBER}) {step.STEP_TITLE}",
                 bg=BG_SECONDARY,
                 fg=TEXT_SECONDARY,
                 font=SMALL_FONT,
@@ -317,10 +318,14 @@ class FullWizard:
             return
 
         # Leave current step
-        if self.current_step:
-            self.current_step.on_leave()
-            if self.current_step.frame:
-                self.current_step.frame.pack_forget()
+        try:
+            if self.current_step:
+                self.current_step.on_leave()
+                if self.current_step.frame:
+                    self.current_step.frame.pack_forget()
+        except Exception as e:
+            log_warning(f"Error leaving step: {e}")
+            print(f"[WARN] Error leaving step: {e}")
 
         # Update index
         self._current_step_index = index
@@ -330,15 +335,30 @@ class FullWizard:
 
         # Skip if needed
         while new_step.should_skip():
+            log_info(f"NAV: Skipping step {new_step.STEP_ID}")
             if self._current_step_index < len(self._steps) - 1:
                 self._current_step_index += 1
                 new_step = self._steps[self._current_step_index]
             else:
                 break
 
+        log_info(f"NAV: Entering step {new_step.STEP_ID} ({new_step.STEP_TITLE})")
+
         if new_step.frame:
             new_step.frame.pack(fill="both", expand=True)
-        new_step.on_enter()
+
+        try:
+            new_step.on_enter()
+        except Exception as e:
+            log_warning(f"Error entering step {new_step.STEP_ID}: {e}")
+            print(f"[ERROR] Error entering step {new_step.STEP_ID}: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror(
+                "Step Error",
+                f"An error occurred entering step '{new_step.STEP_TITLE}':\n\n{e}\n\n"
+                f"You can try going back and forward again."
+            )
 
         # Update UI
         self._update_step_indicator()
@@ -350,6 +370,8 @@ class FullWizard:
         step = self.current_step
         if not step:
             return
+
+        log_info(f"NAV: Next from {step.STEP_ID}")
 
         # Validate current step
         if not step.validate():
@@ -369,6 +391,7 @@ class FullWizard:
     def go_back(self) -> None:
         """Navigate to the previous step."""
         if self._current_step_index > 0:
+            log_info(f"NAV: Back from {self.current_step.STEP_ID if self.current_step else '?'}")
             # Leave current step
             if self.current_step:
                 self.current_step.on_leave()
@@ -412,6 +435,14 @@ class FullWizard:
 
     def _on_cancel(self) -> None:
         """Handle cancel button or window close."""
+        # Force focus to root window to ensure messagebox appears properly
+        # This helps when modal dialogs may have grab_set() active
+        try:
+            self.root.focus_force()
+        except tk.TclError:
+            pass  # Window may be in transition
+
+        log_info("NAV: Cancel clicked")
         result = messagebox.askyesno(
             "Cancel",
             "Are you sure you want to cancel?\n\n"
@@ -419,7 +450,17 @@ class FullWizard:
             icon="warning"
         )
         if result:
+            log_info("NAV: Cancel confirmed")
             self._cancelled = True
+            # Close any open Toplevel windows (modals) before quitting
+            # This ensures no grabs are left active that could interfere with quit
+            for widget in self.root.winfo_children():
+                if isinstance(widget, tk.Toplevel):
+                    try:
+                        widget.grab_release()
+                        widget.destroy()
+                    except tk.TclError:
+                        pass  # Widget may already be destroyed
             self.root.quit()
 
     def _initialize_steps(self) -> None:
@@ -481,8 +522,9 @@ def run_full_wizard(
     """
     # Import step classes here to avoid circular imports
     from .screens.setup_steps import (
-        SourceStep, CharacterStep, OptionsStep
+        SourceStep, SetupStep, OptionsStep
     )
+    from .screens.settings_step import SettingsStep
     from .screens.generation_steps import ReviewStep
     from .screens.outfit_steps import OutfitReviewStep
     from .screens.expression_steps import ExpressionReviewStep
@@ -490,9 +532,10 @@ def run_full_wizard(
 
     wizard = FullWizard(output_root=output_root, api_key=api_key)
 
-    # Register setup steps (1-3) - crop now handled in CharacterStep
-    wizard.register_step(SourceStep)
-    wizard.register_step(CharacterStep)
+    # Register setup steps (1-3)
+    wizard.register_step(SourceStep)      # Step 1: Choose image or prompt
+    wizard.register_step(SettingsStep)    # Step 2: Voice, Name, Archetype (+ normalization for image mode)
+    wizard.register_step(SetupStep)       # Step 3: Crop and modify
     wizard.register_step(OptionsStep)
 
     # Register generation step (unified for both image and prompt modes)
@@ -512,11 +555,108 @@ def run_full_wizard(
     return wizard.run()
 
 
+def run_add_to_existing_wizard(
+    existing_folder: Path,
+    api_key: str,
+    char_data: dict,
+    existing_poses: list,
+    next_pose_letter: str,
+    sprite_creator_poses: list,
+    display_name: str,
+    existing_voice: str,
+    existing_scale: float,
+    existing_eye_line: float,
+    existing_name_color: str,
+    existing_archetype: str = "",
+) -> Optional[WizardState]:
+    """
+    Run the add-to-existing wizard for adding content to an existing character.
+
+    This wizard skips SourceStep (already have folder) and EyeLineStep (use existing).
+    SettingsStep shows name as read-only, SetupStep shows sprite selector.
+
+    Args:
+        existing_folder: Path to existing character folder
+        api_key: Gemini API key
+        char_data: Parsed character.yml data
+        existing_poses: List of existing pose letters
+        next_pose_letter: Next available pose letter
+        sprite_creator_poses: List of pose letters created by Sprite Creator (can add expressions to these)
+        display_name: Character's display name
+        existing_voice: Voice from character.yml (preserved at finalization)
+        existing_scale: Scale from character.yml
+        existing_eye_line: Eye line from character.yml
+        existing_name_color: Name color from character.yml
+        existing_archetype: Archetype from character.yml (empty if not created by this app)
+
+    Returns:
+        WizardState if completed successfully, None if cancelled.
+    """
+    # Import step classes here to avoid circular imports
+    from .screens.setup_steps import (
+        SourceStep, SetupStep, OptionsStep
+    )
+    from .screens.settings_step import SettingsStep
+    from .screens.generation_steps import ReviewStep
+    from .screens.outfit_steps import OutfitReviewStep
+    from .screens.expression_steps import ExpressionReviewStep
+    from .screens.finalization_steps import EyeLineStep, ScaleStep, SummaryStep
+
+    wizard = FullWizard(output_root=existing_folder.parent, api_key=api_key)
+
+    # Pre-configure state for add-to-existing mode
+    wizard._state.is_adding_to_existing = True
+    wizard._state.existing_character_folder = existing_folder
+    wizard._state.existing_character_data = char_data
+    wizard._state.existing_poses = existing_poses
+    wizard._state.next_pose_letter = next_pose_letter
+    wizard._state.sprite_creator_poses = sprite_creator_poses
+    wizard._state.display_name = display_name
+    wizard._state.existing_voice = existing_voice
+    wizard._state.existing_scale = existing_scale
+    wizard._state.existing_eye_line = existing_eye_line
+    wizard._state.existing_name_color = existing_name_color
+    wizard._state.backup_id = char_data.get('backup_id')
+
+    # If character was created by this app (has archetype), pre-fill voice/archetype
+    # These will be shown as read-only in SettingsStep
+    if existing_archetype:
+        wizard._state.archetype_label = existing_archetype
+        wizard._state.voice = existing_voice  # Pre-fill voice for AI prompts
+
+    # Create a TEMP working folder for new content - NOT the existing folder!
+    # This prevents overwrites and allows proper merging at finalization.
+    # The temp folder is created alongside the existing character folder.
+    temp_name = f".{existing_folder.name}_new_content_temp"
+    wizard._state.character_folder = existing_folder.parent / temp_name
+    wizard._state.character_folder.mkdir(parents=True, exist_ok=True)
+
+    # Register steps
+    # Skip SourceStep - we already have the folder selected via launcher
+    wizard.register_step(SettingsStep)    # Step 1: Voice, Archetype (name read-only)
+    wizard.register_step(SetupStep)       # Step 2: Sprite selector (no crop)
+    wizard.register_step(OptionsStep)     # Step 3: Outfits + existing outfit expressions
+
+    # Generation steps (skip ReviewStep and OutfitReviewStep if no new outfits selected)
+    wizard.register_step(ReviewStep)
+    wizard.register_step(OutfitReviewStep)
+    wizard.register_step(ExpressionReviewStep)
+
+    # Skip EyeLineStep - use existing values
+    # EyeLineStep would be registered here normally but we skip it
+
+    wizard.register_step(ScaleStep)       # Scale to match existing character size
+    wizard.register_step(SummaryStep)     # Merge mode finalization
+
+    return wizard.run()
+
+
 # For testing
 if __name__ == "__main__":
     from .screens.setup_steps import (
-        SourceStep, CharacterStep, OptionsStep
+        SourceStep, SetupStep, OptionsStep
     )
+    from .screens.settings_step import SettingsStep
     from .screens.generation_steps import ReviewStep
     from .screens.outfit_steps import OutfitReviewStep
     from .screens.expression_steps import ExpressionReviewStep
@@ -525,9 +665,10 @@ if __name__ == "__main__":
     # Create wizard with all implemented steps
     wizard = FullWizard()
 
-    # Setup steps (1-3) - crop now handled in CharacterStep
-    wizard.register_step(SourceStep)
-    wizard.register_step(CharacterStep)
+    # Setup steps (1-3)
+    wizard.register_step(SourceStep)      # Step 1: Choose image or prompt
+    wizard.register_step(SettingsStep)    # Step 2: Voice, Name, Archetype
+    wizard.register_step(SetupStep)       # Step 3: Crop and modify
     wizard.register_step(OptionsStep)
 
     # Generation step (unified for both modes)

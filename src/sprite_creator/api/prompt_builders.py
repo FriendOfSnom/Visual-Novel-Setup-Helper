@@ -8,7 +8,24 @@ Prompts are preserved exactly as originally written per user request.
 import random
 from typing import Dict, List, Optional
 
-from ..config import GENDER_ARCHETYPES
+from ..config import GENDER_ARCHETYPES, ARCHETYPES
+
+
+def get_archetype_prompt_phrase(archetype_label: str) -> str:
+    """
+    Get the prompt phrase for an archetype (used in fusion and prompt-based creation).
+
+    Falls back to the archetype label if not found in ARCHETYPES dict.
+
+    Args:
+        archetype_label: Archetype name (e.g., "young woman", "motherly woman").
+
+    Returns:
+        Descriptive phrase for use in Gemini prompts.
+    """
+    if archetype_label in ARCHETYPES:
+        return ARCHETYPES[archetype_label]["prompt_phrase"]
+    return archetype_label  # Fallback to label if not found
 
 
 # =============================================================================
@@ -25,61 +42,206 @@ AGE_RANGES = {
     "fatherly man": "35-50",
 }
 
-# Style words by (archetype, outfit_type) - includes article for grammar
-# IMPORTANT: Style words must match the outfit type! "Elegant" implies formal wear.
-# Casual needs casual descriptors, formal needs formal descriptors.
-STYLE_WORDS = {
-    # CASUAL - relaxed, everyday descriptors (no "sexy" - these are everyday outfits)
-    ("young woman", "casual"): ["a cute", "a comfy", "a trendy", "a laid-back"],
-    ("adult woman", "casual"): ["a relaxed", "a comfortable", "a casual", "an effortless"],
-    ("motherly woman", "casual"): ["a comfortable", "a practical", "a relaxed", "a cozy"],
-    ("young man", "casual"): ["a chill", "a comfy", "a laid-back", "a relaxed"],
-    ("adult man", "casual"): ["a relaxed", "a comfortable", "a casual", "an easy-going"],
-    ("fatherly man", "casual"): ["a comfortable", "a practical", "a relaxed", "a classic"],
+# Vibe words by (archetype, outfit_type) - plain adjectives for "with a {vibe} feel" structure
+# IMPORTANT: Vibe words must match the outfit type! "Elegant" implies formal wear.
+VIBE_WORDS = {
+    # CASUAL - relaxed, everyday descriptors (includes "sexy")
+    ("young woman", "casual"): ["cute", "comfy", "trendy", "laid-back", "sexy"],
+    ("adult woman", "casual"): ["relaxed", "comfortable", "casual", "effortless", "sexy"],
+    ("motherly woman", "casual"): ["comfortable", "practical", "relaxed", "cozy", "sexy"],
+    ("young man", "casual"): ["chill", "comfy", "laid-back", "relaxed", "sexy"],
+    ("adult man", "casual"): ["relaxed", "comfortable", "casual", "easy-going", "sexy"],
+    ("fatherly man", "casual"): ["comfortable", "practical", "relaxed", "classic", "sexy"],
 
-    # FORMAL - dressy, elegant descriptors (includes "sexy" option)
-    ("young woman", "formal"): ["a cute", "a stylish", "a trendy", "a glamorous", "a sexy"],
-    ("adult woman", "formal"): ["a chic", "an elegant", "a sophisticated", "a stunning", "a sexy"],
-    ("motherly woman", "formal"): ["a put-together", "a polished", "a flattering", "an elegant", "a sexy"],
-    ("young man", "formal"): ["a fresh", "a stylish", "a sharp", "a dapper", "a sexy"],
-    ("adult man", "formal"): ["a sharp", "a refined", "a polished", "a suave", "a sexy"],
-    ("fatherly man", "formal"): ["a distinguished", "a classic", "a dapper", "a refined", "a sexy"],
+    # FORMAL - dressy, elegant descriptors (includes "sexy")
+    ("young woman", "formal"): ["cute", "stylish", "trendy", "glamorous", "sexy"],
+    ("adult woman", "formal"): ["chic", "elegant", "sophisticated", "stunning", "sexy"],
+    ("motherly woman", "formal"): ["put-together", "polished", "flattering", "elegant", "sexy"],
+    ("young man", "formal"): ["fresh", "stylish", "sharp", "dapper", "sexy"],
+    ("adult man", "formal"): ["sharp", "refined", "polished", "suave", "sexy"],
+    ("fatherly man", "formal"): ["distinguished", "classic", "dapper", "refined", "sexy"],
 
-    # ATHLETIC - sporty descriptors (includes "sexy" option)
-    ("young woman", "athletic"): ["a sporty", "a cute", "a trendy", "an athletic", "a sexy"],
-    ("adult woman", "athletic"): ["a sleek", "a sporty", "a stylish", "an athletic", "a sexy"],
-    ("motherly woman", "athletic"): ["a practical", "a comfortable", "a sporty", "an athletic", "a sexy"],
-    ("young man", "athletic"): ["a sporty", "a cool", "an athletic", "a fresh", "a sexy"],
-    ("adult man", "athletic"): ["a sporty", "an athletic", "a sharp", "a performance", "a sexy"],
-    ("fatherly man", "athletic"): ["a classic", "a practical", "a sporty", "a comfortable", "a sexy"],
+    # ATHLETIC - sporty descriptors (includes "sexy")
+    ("young woman", "athletic"): ["sporty", "cute", "trendy", "athletic", "sexy"],
+    ("adult woman", "athletic"): ["sleek", "sporty", "stylish", "athletic", "sexy"],
+    ("motherly woman", "athletic"): ["practical", "comfortable", "sporty", "athletic", "sexy"],
+    ("young man", "athletic"): ["sporty", "cool", "athletic", "fresh", "sexy"],
+    ("adult man", "athletic"): ["sporty", "athletic", "sharp", "fitted", "sexy"],
+    ("fatherly man", "athletic"): ["classic", "practical", "sporty", "comfortable", "sexy"],
 
-    # SWIMSUIT - beach/pool appropriate descriptors (includes "sexy" option)
-    ("young woman", "swimsuit"): ["a cute", "a trendy", "a stylish", "a fun", "a sexy"],
-    ("adult woman", "swimsuit"): ["a chic", "a stylish", "a flattering", "a sophisticated", "a sexy"],
-    ("motherly woman", "swimsuit"): ["a flattering", "a comfortable", "a classic", "a stylish", "a sexy"],
-    ("young man", "swimsuit"): ["a cool", "a trendy", "a casual", "a fun", "a sexy"],
-    ("adult man", "swimsuit"): ["a sharp", "a classic", "a stylish", "a comfortable", "a sexy"],
-    ("fatherly man", "swimsuit"): ["a classic", "a comfortable", "a practical", "a casual", "a sexy"],
+    # SWIMSUIT - beach/pool appropriate descriptors (includes "sexy")
+    ("young woman", "swimsuit"): ["cute", "trendy", "stylish", "fun", "sexy"],
+    ("adult woman", "swimsuit"): ["chic", "stylish", "flattering", "sophisticated", "sexy"],
+    ("motherly woman", "swimsuit"): ["flattering", "comfortable", "classic", "stylish", "sexy"],
+    ("young man", "swimsuit"): ["cool", "trendy", "casual", "fun", "sexy"],
+    ("adult man", "swimsuit"): ["sharp", "classic", "stylish", "comfortable", "sexy"],
+    ("fatherly man", "swimsuit"): ["classic", "comfortable", "practical", "casual", "sexy"],
 
     # UNDERWEAR - comfortable/loungewear descriptors (no "sexy" - handled by tier system)
-    ("young woman", "underwear"): ["a cute", "a comfy", "a trendy", "a soft"],
-    ("adult woman", "underwear"): ["a chic", "a comfortable", "an elegant", "a stylish"],
-    ("motherly woman", "underwear"): ["a comfortable", "a practical", "a soft", "a cozy"],
-    ("young man", "underwear"): ["a comfy", "a basic", "a simple", "a casual"],
-    ("adult man", "underwear"): ["a simple", "a comfortable", "a basic", "a classic"],
-    ("fatherly man", "underwear"): ["a comfortable", "a practical", "a simple", "a classic"],
+    ("young woman", "underwear"): ["cute", "comfy", "trendy", "soft"],
+    ("adult woman", "underwear"): ["chic", "comfortable", "elegant", "stylish"],
+    ("motherly woman", "underwear"): ["comfortable", "practical", "soft", "cozy"],
+    ("young man", "underwear"): ["comfy", "basic", "simple", "casual"],
+    ("adult man", "underwear"): ["simple", "comfortable", "basic", "classic"],
+    ("fatherly man", "underwear"): ["comfortable", "practical", "simple", "classic"],
 
     # UNIFORM - professional/standard descriptors (no "sexy" - uniforms are standardized)
-    ("young woman", "uniform"): ["a neat", "a crisp", "a proper", "a standard"],
-    ("adult woman", "uniform"): ["a professional", "a neat", "a crisp", "a proper"],
-    ("motherly woman", "uniform"): ["a professional", "a neat", "a proper", "a standard"],
-    ("young man", "uniform"): ["a neat", "a crisp", "a proper", "a standard"],
-    ("adult man", "uniform"): ["a professional", "a neat", "a crisp", "a sharp"],
-    ("fatherly man", "uniform"): ["a professional", "a distinguished", "a proper", "a neat"],
+    ("young woman", "uniform"): ["neat", "crisp", "proper", "standard"],
+    ("adult woman", "uniform"): ["professional", "neat", "crisp", "proper"],
+    ("motherly woman", "uniform"): ["professional", "neat", "proper", "standard"],
+    ("young man", "uniform"): ["neat", "crisp", "proper", "standard"],
+    ("adult man", "uniform"): ["professional", "neat", "crisp", "sharp"],
+    ("fatherly man", "uniform"): ["professional", "distinguished", "proper", "neat"],
 }
 
-# Colors for formal outfits (female archetypes only)
-# Each archetype has ~20 colors with some overlap
+# Garment types by (archetype, outfit_type) - specific clothing items
+# IMPORTANT: Garment types must be clothing items ONLY - no adjectives or vibes
+GARMENT_TYPES = {
+    # FORMAL - Female
+    ("young woman", "formal"): [
+        "slip dress", "mini dress", "cocktail dress", "bodycon dress", "A-line dress",
+        "fit-and-flare dress", "halter dress", "off-shoulder dress", "two-piece set",
+        "jumpsuit", "satin dress", "sequin dress", "tube dress", "backless dress", "corset dress",
+    ],
+    ("adult woman", "formal"): [
+        "sheath dress", "wrap dress", "midi dress", "cocktail dress", "column dress",
+        "asymmetric dress", "blazer dress", "gown", "jumpsuit", "peplum dress",
+        "pencil dress", "one-shoulder dress", "ruched dress", "cape dress", "tuxedo dress",
+    ],
+    ("motherly woman", "formal"): [
+        "A-line gown", "empire waist dress", "tea-length dress", "wrap dress", "maxi dress",
+        "pantsuit", "fit-and-flare dress", "draped dress", "sheath dress", "flutter-sleeve dress",
+        "chiffon dress", "lace dress", "pleated dress", "jacket dress", "kaftan gown",
+    ],
+    ("young man", "formal"): [
+        "slim-fit suit", "blazer and slacks", "dress shirt and vest", "tailored trousers and shirt",
+        "suit and tie", "button-down and dress pants", "turtleneck and blazer", "mock neck and suit",
+    ],
+    ("adult man", "formal"): [
+        "three-piece suit", "tuxedo", "double-breasted suit", "blazer and slacks",
+        "suit and tie", "dress shirt and trousers", "waistcoat outfit", "mandarin collar suit",
+    ],
+    ("fatherly man", "formal"): [
+        "three-piece suit", "double-breasted suit", "blazer and slacks", "suit and tie",
+        "sport coat and slacks", "cardigan and dress shirt", "sweater vest and slacks", "tweed suit",
+    ],
+
+    # CASUAL - Female
+    ("young woman", "casual"): [
+        "crop top and jeans", "sundress", "oversized sweater and leggings", "mini skirt and top",
+        "romper", "t-shirt dress", "graphic tee and jeans", "denim shorts and tank",
+        "flowy blouse and shorts", "co-ord set", "halter top and skirt", "bodysuit and jeans",
+        "tube top and shorts", "off-shoulder top and jeans", "hoodie and joggers",
+    ],
+    ("adult woman", "casual"): [
+        "blouse and slacks", "midi dress", "jeans and blouse", "blazer and jeans",
+        "sweater and trousers", "shirt dress", "wide-leg pants and top", "wrap top and jeans",
+        "cardigan and dress", "jumpsuit", "turtleneck and jeans", "henley and chinos",
+        "sweater dress", "culottes and blouse", "joggers and sweater",
+    ],
+    ("motherly woman", "casual"): [
+        "cardigan and jeans", "tunic and leggings", "blouse and slacks", "maxi dress",
+        "jeans and sweater", "knit top and pants", "pullover and jeans", "button-up and capris",
+        "linen pants and blouse", "jersey dress", "polo and khakis", "fleece jacket and jeans",
+        "denim jacket outfit", "peasant top and jeans", "vest and long-sleeve tee",
+    ],
+    ("young man", "casual"): [
+        "graphic tee and jeans", "hoodie and jeans", "button-up and chinos", "shorts and t-shirt",
+        "layered tees and jeans", "polo and shorts", "bomber jacket outfit", "denim jacket and tee",
+        "tank top and shorts", "joggers and sweatshirt",
+    ],
+    ("adult man", "casual"): [
+        "henley and jeans", "button-down and jeans", "polo and chinos", "chinos and sweater",
+        "sweater and jeans", "blazer and jeans", "quarter-zip and pants", "linen shirt and pants",
+        "hoodie and chinos", "cardigan and t-shirt",
+    ],
+    ("fatherly man", "casual"): [
+        "polo and khakis", "button-up and jeans", "sweater and slacks", "jeans and flannel",
+        "vest and button-down", "cardigan and chinos", "pullover and jeans", "golf shirt and shorts",
+        "fleece and khakis", "denim jacket outfit",
+    ],
+
+    # ATHLETIC - shared per gender
+    ("young woman", "athletic"): [
+        "yoga pants and sports bra", "sports bra and leggings", "athletic shorts and tank",
+        "workout tank and leggings", "running shorts and top", "gym shorts and crop top",
+        "compression leggings and top", "sports bra and joggers", "racerback tank and shorts",
+        "tennis skirt and polo", "bike shorts and tank", "unitard",
+    ],
+    ("adult woman", "athletic"): [
+        "yoga pants and sports bra", "sports bra and leggings", "athletic shorts and tank",
+        "workout tank and leggings", "running shorts and top", "gym shorts and crop top",
+        "compression leggings and top", "sports bra and joggers", "racerback tank and shorts",
+        "tennis skirt and polo", "bike shorts and tank", "unitard",
+    ],
+    ("motherly woman", "athletic"): [
+        "yoga pants and sports bra", "sports bra and leggings", "athletic shorts and tank",
+        "workout tank and leggings", "running shorts and top", "gym shorts and crop top",
+        "compression leggings and top", "sports bra and joggers", "racerback tank and shorts",
+        "tennis skirt and polo", "bike shorts and tank", "unitard",
+    ],
+    ("young man", "athletic"): [
+        "tank top and shorts", "athletic shirt and joggers", "gym shorts and tee",
+        "compression shirt and shorts", "running shorts and singlet", "basketball shorts and jersey",
+        "tank top and joggers", "sleeveless hoodie and shorts", "muscle tee and shorts",
+        "track pants and jacket", "compression pants and tee", "athletic shorts and tank",
+    ],
+    ("adult man", "athletic"): [
+        "tank top and shorts", "athletic shirt and joggers", "gym shorts and tee",
+        "compression shirt and shorts", "running shorts and singlet", "basketball shorts and jersey",
+        "tank top and joggers", "sleeveless hoodie and shorts", "muscle tee and shorts",
+        "track pants and jacket", "compression pants and tee", "athletic shorts and tank",
+    ],
+    ("fatherly man", "athletic"): [
+        "tank top and shorts", "athletic shirt and joggers", "gym shorts and tee",
+        "compression shirt and shorts", "running shorts and singlet", "basketball shorts and jersey",
+        "tank top and joggers", "sleeveless hoodie and shorts", "muscle tee and shorts",
+        "track pants and jacket", "compression pants and tee", "athletic shorts and tank",
+    ],
+
+    # SWIMSUIT - Female (archetype-specific)
+    ("young woman", "swimsuit"): [
+        "bikini", "high-waisted bikini", "one-piece swimsuit", "bandeau bikini",
+        "triangle bikini", "sporty one-piece", "cut-out one-piece", "string bikini",
+        "monokini", "tube bikini", "halter bikini", "racerback one-piece",
+    ],
+    ("adult woman", "swimsuit"): [
+        "one-piece swimsuit", "bikini", "wrap swimsuit", "plunge one-piece",
+        "two-piece", "halter one-piece", "belted one-piece", "bikini with sarong",
+        "asymmetric one-piece", "bandeau one-piece", "underwire bikini", "high-cut one-piece",
+    ],
+    ("motherly woman", "swimsuit"): [
+        "one-piece swimsuit", "tankini", "ruched one-piece", "skirted swimsuit",
+        "high-neck one-piece", "wrap one-piece", "modest bikini", "swim dress",
+        "long-torso one-piece", "boyshort bikini", "halter tankini", "flutter tankini",
+    ],
+    # SWIMSUIT - Male (shared across archetypes)
+    ("young man", "swimsuit"): [
+        "board shorts", "swim trunks", "swim briefs", "jammers",
+        "swim shorts", "square-cut trunks", "volley shorts", "hybrid shorts",
+    ],
+    ("adult man", "swimsuit"): [
+        "board shorts", "swim trunks", "swim briefs", "jammers",
+        "swim shorts", "square-cut trunks", "volley shorts", "hybrid shorts",
+    ],
+    ("fatherly man", "swimsuit"): [
+        "board shorts", "swim trunks", "swim briefs", "jammers",
+        "swim shorts", "square-cut trunks", "volley shorts", "hybrid shorts",
+    ],
+}
+
+# Color roles with weights for weighted random selection
+COLOR_ROLES = [
+    ("primary", 40),    # Main/dominant color - 40%
+    ("secondary", 30),  # Supporting color - 30%
+    ("detail", 20),     # Accent color - 20%
+    ("pattern", 10),    # Color in a pattern - 10%
+]
+
+# Colors keyed by (archetype, outfit_type) for maximum relevance
+# =============================================================================
+
+# FORMAL COLORS - Female
 FORMAL_COLORS = {
     "young woman": [
         "black", "navy", "burgundy", "emerald", "gold", "silver",
@@ -99,47 +261,134 @@ FORMAL_COLORS = {
         "deep purple", "cranberry", "pearl", "olive", "aubergine",
         "taupe", "rich chocolate", "peacock blue", "merlot", "sage green",
     ],
+    # Male formal colors
+    "young man": [
+        "black", "navy", "charcoal", "burgundy", "white",
+        "royal blue", "forest green", "silver", "wine",
+        "blush pink", "lavender", "mint", "gold",
+    ],
+    "adult man": [
+        "black", "navy", "charcoal", "midnight blue", "burgundy",
+        "slate", "forest green", "cream", "bronze",
+        "plum", "teal", "champagne", "copper",
+    ],
+    "fatherly man": [
+        "black", "navy", "charcoal", "brown", "grey",
+        "slate", "forest green", "tan", "wine",
+        "hunter green", "burgundy", "pearl grey",
+    ],
 }
 
-# Colors for swimsuit outfits (female archetypes only)
-# Beach/pool appropriate colors for each age group
+# SWIMSUIT COLORS - Female
 SWIMSUIT_COLORS = {
     "young woman": [
-        # Shared
         "black", "navy", "white", "coral", "turquoise", "red",
-        # Bright/vibrant
         "hot pink", "neon orange", "electric blue", "lime green", "sunny yellow",
-        # Pastels
         "baby pink", "lavender", "mint", "peach", "sky blue",
-        # Trendy
         "tie-dye", "tropical print", "watermelon pink",
     ],
     "adult woman": [
-        # Shared
         "black", "navy", "white", "coral", "turquoise", "red",
-        # Classic bold
         "emerald", "cobalt blue", "cherry red", "royal blue",
-        # Sophisticated
         "olive", "rust", "bronze", "burgundy", "forest green",
-        # Patterns
         "animal print", "tropical print", "classic stripe",
     ],
     "motherly woman": [
-        # Shared
         "black", "navy", "white", "coral", "turquoise", "red",
-        # Classic/flattering
         "deep teal", "burgundy", "plum", "forest green", "royal blue",
-        # Muted tones
         "slate blue", "olive", "rust", "berry", "deep coral",
-        # Subtle patterns
         "subtle stripe", "classic navy and white", "muted floral",
+    ],
+    # Male swimsuit colors (shared across archetypes)
+    "young man": [
+        "navy", "black", "white", "red", "royal blue",
+        "forest green", "orange", "teal", "grey", "burgundy",
+        "tropical print", "stripe", "camo", "neon", "coral",
+    ],
+    "adult man": [
+        "navy", "black", "white", "red", "royal blue",
+        "forest green", "orange", "teal", "grey", "burgundy",
+        "tropical print", "stripe", "camo", "neon", "coral",
+    ],
+    "fatherly man": [
+        "navy", "black", "white", "red", "royal blue",
+        "forest green", "orange", "teal", "grey", "burgundy",
+        "tropical print", "stripe", "camo", "neon", "coral",
+    ],
+}
+
+# CASUAL COLORS
+CASUAL_COLORS = {
+    "young woman": [
+        "white", "black", "denim blue", "light pink", "lavender",
+        "baby blue", "mint", "coral", "sunny yellow", "peach",
+        "hot pink", "neon green", "tie-dye", "lilac", "tangerine",
+    ],
+    "adult woman": [
+        "white", "black", "navy", "cream", "beige",
+        "dusty rose", "sage", "terracotta", "mustard", "burgundy",
+        "olive", "blush", "cobalt", "camel", "charcoal",
+    ],
+    "motherly woman": [
+        "white", "black", "navy", "cream", "olive",
+        "dusty blue", "mauve", "sage", "burgundy", "rust",
+        "plum", "teal", "chocolate", "taupe", "forest green",
+    ],
+    "young man": [
+        "white", "black", "navy", "grey", "denim blue",
+        "red", "forest green", "burgundy", "mustard", "royal blue",
+        "neon", "tie-dye", "camo", "orange", "purple",
+    ],
+    "adult man": [
+        "white", "black", "navy", "grey", "olive",
+        "charcoal", "burgundy", "sage", "rust", "camel",
+        "cobalt", "plum", "teal", "cream", "terracotta",
+    ],
+    "fatherly man": [
+        "white", "black", "navy", "grey", "khaki",
+        "brown", "forest green", "burgundy", "slate", "tan",
+        "maroon", "hunter green", "light blue", "beige", "charcoal",
+    ],
+}
+
+# ATHLETIC COLORS
+ATHLETIC_COLORS = {
+    "young woman": [
+        "black", "white", "hot pink", "coral", "turquoise",
+        "neon yellow", "electric blue", "mint", "purple", "orange",
+        "tie-dye", "ombre pink", "lavender", "lime green", "ruby",
+    ],
+    "adult woman": [
+        "black", "white", "hot pink", "coral", "turquoise",
+        "neon yellow", "electric blue", "mint", "purple", "orange",
+        "tie-dye", "ombre pink", "lavender", "lime green", "ruby",
+    ],
+    "motherly woman": [
+        "black", "white", "hot pink", "coral", "turquoise",
+        "neon yellow", "electric blue", "mint", "purple", "orange",
+        "tie-dye", "ombre pink", "lavender", "lime green", "ruby",
+    ],
+    "young man": [
+        "black", "white", "navy", "grey", "red",
+        "royal blue", "forest green", "orange", "charcoal", "lime",
+        "camo", "neon yellow", "teal", "burgundy", "electric blue",
+    ],
+    "adult man": [
+        "black", "white", "navy", "grey", "red",
+        "royal blue", "forest green", "orange", "charcoal", "lime",
+        "camo", "neon yellow", "teal", "burgundy", "electric blue",
+    ],
+    "fatherly man": [
+        "black", "white", "navy", "grey", "red",
+        "royal blue", "forest green", "orange", "charcoal", "lime",
+        "camo", "neon yellow", "teal", "burgundy", "electric blue",
     ],
 }
 
 # Occasions by (archetype, outfit_type) - provides context for outfit generation
 # Values can be strings or lists (lists are randomly chosen from for variety)
 OCCASIONS = {
-    # FORMAL - Female archetypes get variety lists
+    # FORMAL - 10 occasions per archetype
     ("young woman", "formal"): [
         "going to prom",
         "attending a homecoming dance",
@@ -147,6 +396,10 @@ OCCASIONS = {
         "attending a sorority formal",
         "going to a graduation dinner",
         "attending a sweet sixteen party",
+        "attending a theater premiere",
+        "attending a sorority philanthropy event",
+        "visiting an upscale restaurant",
+        "going to a debutante ball",
     ],
     ("adult woman", "formal"): [
         "attending a cocktail party",
@@ -155,6 +408,10 @@ OCCASIONS = {
         "going to a charity gala",
         "attending an awards ceremony",
         "going to a black-tie dinner",
+        "going to a film premiere",
+        "attending a book launch party",
+        "at a rooftop cocktail event",
+        "going to a museum gala",
     ],
     ("motherly woman", "formal"): [
         "attending a gala",
@@ -163,6 +420,10 @@ OCCASIONS = {
         "going to an anniversary celebration",
         "attending an awards banquet",
         "going to the opera or symphony",
+        "attending a retirement celebration",
+        "going to a country club dinner",
+        "at a scholarship banquet",
+        "attending a wine and cheese reception",
     ],
     ("young man", "formal"): [
         "going to prom",
@@ -171,6 +432,10 @@ OCCASIONS = {
         "attending a graduation dinner",
         "going to a fraternity formal",
         "attending a family wedding",
+        "attending a scholarship dinner",
+        "going to a charity concert",
+        "at a debutante ball",
+        "going to a fancy restaurant",
     ],
     ("adult man", "formal"): [
         "attending a wedding as a guest",
@@ -179,6 +444,10 @@ OCCASIONS = {
         "going to a charity gala",
         "attending an awards dinner",
         "going to a formal date night",
+        "going to a networking gala",
+        "attending a client dinner",
+        "at a museum opening",
+        "going to a charity auction",
     ],
     ("fatherly man", "formal"): [
         "attending a formal dinner",
@@ -187,38 +456,54 @@ OCCASIONS = {
         "going to a business banquet",
         "attending an anniversary dinner",
         "going to the theater or opera",
+        "attending a retirement party",
+        "going to a country club event",
+        "at a professional conference dinner",
+        "attending a lodge ceremony",
     ],
 
-    # CASUAL
+    # CASUAL - 12 occasions per archetype
     ("young woman", "casual"): [
         "going to class",
         "hanging out with friends",
-        "grabbing coffee",
+        "grabbing boba",
         "going to the mall",
         "attending a movie night",
         "going on a casual date",
         "studying at a coffee shop",
         "going to weekend brunch",
+        "at a rooftop hangout",
+        "going to a flea market",
+        "at a bowling night",
+        "visiting an arcade",
     ],
     ("adult woman", "casual"): [
-        "running weekend errands",
-        "grabbing coffee with a friend",
+        "at the farmers market",
+        "meeting for coffee at a cafe",
         "doing some casual shopping",
         "a relaxed weekend afternoon",
         "working from home",
         "meeting a friend for lunch",
         "a casual day off",
         "hanging out on the weekend",
+        "at a book signing",
+        "going to a craft fair",
+        "visiting a winery",
+        "at a trivia night",
     ],
     ("motherly woman", "casual"): [
         "running errands",
         "picking up the kids",
         "at a school pickup",
         "going to weekend activities",
-        "having coffee with friends",
+        "having coffee with neighbors",
         "going to a casual lunch",
         "doing weekend shopping",
         "at a backyard barbecue",
+        "at a craft night",
+        "going to a bake sale",
+        "visiting a nursery",
+        "at a potluck dinner",
     ],
     ("young man", "casual"): [
         "hanging out with friends",
@@ -229,6 +514,10 @@ OCCASIONS = {
         "going to a weekend hangout",
         "attending a house party",
         "chilling on campus",
+        "at a pickup basketball game",
+        "going to a concert",
+        "at a gaming tournament",
+        "visiting an escape room",
     ],
     ("adult man", "casual"): [
         "going to weekend brunch",
@@ -236,9 +525,13 @@ OCCASIONS = {
         "watching the game at a sports bar",
         "attending a barbecue",
         "hanging out with buddies",
-        "running weekend errands",
+        "picking up groceries",
         "going to a casual dinner",
         "relaxing on the weekend",
+        "at a brewery tour",
+        "going to a car show",
+        "visiting a golf range",
+        "at a poker night",
     ],
     ("fatherly man", "casual"): [
         "hosting a weekend barbecue",
@@ -249,6 +542,10 @@ OCCASIONS = {
         "going to a casual lunch",
         "doing weekend yard work",
         "taking the family out",
+        "at a fishing trip",
+        "going to a home improvement store",
+        "visiting a classic car show",
+        "at a block party",
     ],
 
     # ATHLETIC
@@ -285,6 +582,32 @@ OCCASIONS = {
 }
 
 
+def _select_weighted_color_role() -> str:
+    """Select a color role using weighted random selection."""
+    total_weight = sum(weight for _, weight in COLOR_ROLES)
+    rand_val = random.randint(1, total_weight)
+    cumulative = 0
+    for role, weight in COLOR_ROLES:
+        cumulative += weight
+        if rand_val <= cumulative:
+            return role
+    return "primary"  # Fallback
+
+
+def _get_color_for_outfit(archetype_label: str, outfit_type: str) -> str:
+    """Get a random color appropriate for the archetype and outfit type."""
+    if outfit_type == "formal" and archetype_label in FORMAL_COLORS:
+        return random.choice(FORMAL_COLORS[archetype_label])
+    elif outfit_type == "swimsuit" and archetype_label in SWIMSUIT_COLORS:
+        return random.choice(SWIMSUIT_COLORS[archetype_label])
+    elif outfit_type == "casual" and archetype_label in CASUAL_COLORS:
+        return random.choice(CASUAL_COLORS[archetype_label])
+    elif outfit_type == "athletic" and archetype_label in ATHLETIC_COLORS:
+        return random.choice(ATHLETIC_COLORS[archetype_label])
+    # Fallback for underwear/uniform or missing entries
+    return random.choice(["black", "white", "navy", "grey"])
+
+
 def generate_outfit_description(
     api_key: str,
     outfit_type: str,
@@ -293,8 +616,14 @@ def generate_outfit_description(
     """
     Generate an outfit description using Gemini text API.
 
-    Combines archetype-specific age ranges, style words, and occasion context
-    to produce varied, attractive outfit descriptions.
+    Combines archetype-specific vibe words, garment types, age ranges, occasions,
+    colors, and color roles to produce varied, attractive outfit descriptions.
+
+    New prompt structure (v2.0):
+    "Describe a new realistic outfit for a {gender_word} aged {age} {occasion},
+    inspired by {garment_type} with a {vibe_word} feel, in one brief sentence.
+    Keep it realistic while including {color} as a {color_role} color.
+    Do not give a preamble before the outfit and do not describe what is being worn on the feet."
 
     Args:
         api_key: Google Gemini API key.
@@ -306,36 +635,50 @@ def generate_outfit_description(
     """
     from .gemini_client import call_gemini_text
 
+    # Strip trailing digits from renamed outfit keys (e.g., "formal2" → "formal")
+    # This happens in add-to-existing mode when outfit names conflict
+    base_type = outfit_type.rstrip("0123456789") or outfit_type
+
     # Get archetype-specific data
     age = AGE_RANGES.get(archetype_label, "20-35")
-    occasion_data = OCCASIONS.get((archetype_label, outfit_type), f"a {outfit_type} occasion")
-    # Support both string and list values (lists provide variety)
-    occasion = random.choice(occasion_data) if isinstance(occasion_data, list) else occasion_data
-    # Style words now keyed by (archetype, outfit_type) to avoid "elegant casual" oxymorons
-    style_word = random.choice(STYLE_WORDS.get((archetype_label, outfit_type), ["a stylish"]))
     gender_word = "woman" if archetype_label.endswith("woman") else "man"
 
-    # Use specific clothing type for certain outfits to avoid deviation
-    if outfit_type == "swimsuit":
-        clothing_word = "swimsuit"
-    elif outfit_type == "athletic":
-        clothing_word = "athletic wear"
+    # Get occasion (support both string and list values)
+    occasion_data = OCCASIONS.get((archetype_label, base_type), f"a {base_type} occasion")
+    occasion = random.choice(occasion_data) if isinstance(occasion_data, list) else occasion_data
+
+    # Get vibe word (plain adjective, no article)
+    vibe_word = random.choice(VIBE_WORDS.get((archetype_label, base_type), ["stylish"]))
+
+    # Get garment type
+    garment_types = GARMENT_TYPES.get((archetype_label, base_type), None)
+    if garment_types:
+        garment_type = random.choice(garment_types)
     else:
-        clothing_word = "outfit"
+        # Fallback for underwear/uniform which don't use garment types
+        garment_type = base_type
 
-    # Add color hint for formal and swimsuit female outfits (50% of the time)
-    color_hint = ""
-    if random.random() < 0.5:
-        if outfit_type == "formal" and archetype_label in FORMAL_COLORS:
-            color = random.choice(FORMAL_COLORS[archetype_label])
-            color_hint = f" The outfit should be {color}."
-        elif outfit_type == "swimsuit" and archetype_label in SWIMSUIT_COLORS:
-            color = random.choice(SWIMSUIT_COLORS[archetype_label])
-            color_hint = f" The swimsuit should be {color}."
+    # ALWAYS get color and color role (no more 50% chance)
+    color = _get_color_for_outfit(archetype_label, base_type)
+    color_role = _select_weighted_color_role()
 
-    # Build prompt
-    prompt = f"""Describe {style_word} {clothing_word} for a {gender_word} aged {age} {occasion}.
-One brief sentence with specific colors. No preamble, no commentary. Do not mention footwear.{color_hint}"""
+    # Build the new prompt
+    prompt = (
+        f"Describe a new realistic outfit for a {gender_word} aged {age} {occasion}, "
+        f"inspired by {garment_type} with a {vibe_word} feel, in one brief sentence. "
+        f"Keep it realistic while including {color} as a {color_role} color. "
+        "Do not give a preamble before the outfit and do not describe what is being worn on the feet."
+    )
+
+    # Anti-layering rules for specific outfit+gender combos
+    # Prevents Gemini from adding unnecessary blazers, cardigans, cover-ups
+    is_female = gender_word == "woman"
+    if base_type == "swimsuit":
+        prompt += " Describe ONLY the swimwear itself. Do not pair it with shorts, pants, skirts, cover-ups, wraps, or any other non-swimwear items."
+    elif base_type == "athletic":
+        prompt += " Do not add jackets or heavy layers over athletic wear."
+    elif is_female and base_type in ("formal", "casual"):
+        prompt += " Do not describe layered outfits with blazers, suit jackets, or cardigans over dresses."
 
     # Call Gemini text API
     description = call_gemini_text(api_key, prompt, temperature=1.0)
@@ -367,22 +710,33 @@ def archetype_to_gender_style(archetype_label: str) -> str:
 # Core Prompt Builders (DO NOT MODIFY - per user request)
 # =============================================================================
 
-def build_expression_prompt(expression_desc: str, background_color: str = "black (#000000)") -> str:
+def build_expression_prompt(
+    expression_desc: str,
+    background_color: str = "black (#000000)",
+    add_to_existing: bool = False,
+) -> str:
     """
     Prompt to change facial expression, keeping style and framing.
 
-    NOTE: Prompt wording preserved exactly as-is per user request.
+    NOTE: Prompt wording preserved exactly as-is per user request (for normal mode).
 
     Args:
         expression_desc: Description of the desired expression.
         background_color: Background color description (e.g., "magenta (#FF00FF)" or "black (#000000)").
+        add_to_existing: If True, uses upscale instruction for add-to-character mode
+            where source images are already scaled down.
 
     Returns:
         Prompt string for expression generation.
     """
     bg = background_color.split("(")[0].strip()  # Extract color name (magenta or black)
+
+    # Add-to-character mode only: upscale with artifact prevention
+    enhancement_line = "Upscale and sharpen the image, but make sure no artifacts are left behind. " if add_to_existing else ""
+
     return (
         f"Edit the character's expression and pose to match this emotion: {expression_desc}, but don't change the size, proportions, framing, or art style of the character. "
+        f"{enhancement_line}"
         "Keep the hair volume, hair outlines, and the hair style all the exact same. "
         f"Give the character a {bg} background behind them. "
         "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
@@ -403,12 +757,20 @@ def build_outfit_prompt(base_outfit_desc: str, gender_style: str, background_col
         Prompt string for outfit generation.
     """
     bg = background_color.split("(")[0].strip()  # Extract color name (magenta or black)
-    return (
+    prompt = (
         f"Edit the character's clothes to match this description: {base_outfit_desc}, but don't change the size, proportions, framing, or art style of the character. "
-        "IMPORTANT: Keep the exact same hair length - do not make the hair shorter or longer. The hair must reach the same point on the body as in the original. You may change the hair style to better suit the outfit."
+        "IMPORTANT: Keep the exact same hair length as the original. Do not make it any longer than it is, while adding some kind of styling that fits the new outfit. "
         f"Give the character a {bg} background behind them. "
         "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
     )
+
+    # Anti-cover-up for swimwear: prevent Gemini from adding jackets/wraps over swimsuits
+    SWIMWEAR_KEYWORDS = {"bikini", "swimsuit", "one-piece", "tankini", "monokini", "swim", "bathing suit"}
+    desc_lower = base_outfit_desc.lower()
+    if any(kw in desc_lower for kw in SWIMWEAR_KEYWORDS):
+        prompt += " This is swimwear only. Do not add any cover-ups, jackets, cardigans, wraps, sarongs, or layering pieces over the swimwear."
+
+    return prompt
 
 def build_standard_school_uniform_prompt(
     archetype_label: str,
@@ -455,7 +817,7 @@ def build_standard_school_uniform_prompt(
     return (
         f"Edit the character's clothes to match this school uniform: {uniform_desc}. "
         "Don't change the size, proportions, framing, or art style of the character. "
-        "IMPORTANT: Keep the exact same hair length - do not make the hair shorter or longer. The hair must reach the same point on the body as in the original. You may change the hair style to better suit the outfit. "
+        "IMPORTANT: Keep the exact same hair length as the original. Do not make it any longer than it is, while adding some kind of styling that fits the new outfit. "
         "Give the character a black background behind them. "
         "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
     )
@@ -477,11 +839,12 @@ def build_prompt_for_idea(concept: str, archetype_label: str, gender_style: str,
         Prompt string for new character generation from text.
     """
     bg = background_color.split("(")[0].strip()  # Extract color name (magenta or black)
+    archetype_phrase = get_archetype_prompt_phrase(archetype_label)
     return (
-        f"Create concept art for an original {archetype_label}, for a Japanese-style visual novel. The character idea is: "
-        f"{concept} "
+        f"Create concept sprite art for an original {archetype_phrase}, for a Japanese-style visual novel. "
+        f"The character idea is: {concept} "
         "IMPORTANT: The character must appear to be 18 years old or older. If the concept describes a younger character, depict them as a young adult (18+) instead. "
-        "Match the art style and rendering of the attached reference character images so the new character has clean line art and vibrant, but not overly saturated colors, that make it look like it came from the same artist. "
+        "Match the art style and rendering quality of the input images so the new character has the same artist, vibrant colors, and overall styling. "
         "Have them facing mostly toward the viewer in a friendly, neutral pose, that would work as a base sprite. "
         "They should not be holding anything in their hands. "
         f"Give the character a {bg} background behind them. "
@@ -508,6 +871,26 @@ def build_normalize_image_prompt() -> str:
     )
 
 
+def build_normalize_existing_character_prompt() -> str:
+    """
+    Prompt to normalize an existing character image (no age-up).
+
+    Used in add-to-character mode where the character is already established.
+    Same as build_normalize_image_prompt() but without the age verification,
+    since we're working with an existing character.
+
+    Returns:
+        Prompt string for existing character normalization.
+    """
+    return (
+        "Sharpen the image to at least 720p resolution if it is lower than that and "
+        "correct any artifacts of blurriness. Don't change the size, proportions, "
+        "framing, or art style of the character. Give the character a black (#000000) "
+        "background behind them. Make sure the head, arms, hair, hands, and clothes "
+        "are all kept within the image."
+    )
+
+
 def build_character_modification_prompt(user_instructions: str) -> str:
     """
     Prompt to modify a character based on user instructions.
@@ -523,10 +906,42 @@ def build_character_modification_prompt(user_instructions: str) -> str:
     """
     return (
         f"Modify this character based on the following instructions: {user_instructions} "
+        "IMPORTANT: If the modification makes a character appear younger than 18, then ignore "
+        "that modification instruction and keep them looking at least 18 years old. "
         "Maintain the same art style, proportions, and overall character design. Apply "
         "the requested changes while keeping the character recognizable. Give the "
         "character a black (#000000) background behind them. Make sure the head, arms, "
         "hair, hands, and clothes are all kept within the image."
+    )
+
+
+def build_fusion_prompt(archetype_label: str, gender_style: str) -> str:
+    """
+    Prompt to create a fused character from two source images.
+
+    Creates a new character that blends visual features from both input characters,
+    suitable for creating children or combined characters.
+
+    Args:
+        archetype_label: Character archetype (e.g., "young woman", "adult man").
+        gender_style: 'f' or 'm'.
+
+    Returns:
+        Prompt string for character fusion.
+    """
+    archetype_phrase = get_archetype_prompt_phrase(archetype_label)
+    return (
+        f"Using the two character images attached, create a completely new {archetype_phrase} that genetically blends both characters - as if this character is their child or sibling. "
+        "DO NOT simply recolor one character or give them the other's clothes. This must be a TRUE FUSION with mixed physical features. "
+        "Blend specific traits from BOTH characters: "
+        "- Face shape from one, eye shape from the other "
+        "- Hair could blend both colors or take style from one and color from the other "
+        f"- Body proportions should balance out while still looking like a completely new {archetype_phrase} "
+        "IMPORTANT: The character must appear to be 18 years old or older. "
+        "Match the art style of the input images so the new character has the same artist, vibrant colors, and overall styling. "
+        "Have the new character facing mostly toward the viewer in a friendly, neutral pose. "
+        "Give the character a black (#000000) background behind them. "
+        "Make sure the head, arms, hair, hands, and clothes are all kept within the image."
     )
 
 
@@ -548,29 +963,31 @@ def build_simple_outfit_description(outfit_key: str, gender_style: str) -> str:
     Returns:
         Generic outfit description string.
     """
+    # Strip trailing digits from renamed keys (e.g., "formal2" → "formal")
+    base_key = outfit_key.rstrip("0123456789") or outfit_key
     gender_word = "female character" if gender_style == "f" else "male character"
 
-    if outfit_key == "formal":
+    if base_key == "formal":
         return (
             f"a slightly dressy outfit this {gender_word} would wear to a school dance "
             "or evening party, grounded and modern"
         )
-    if outfit_key == "casual":
+    if base_key == "casual":
         return (
             f"a comfy everyday casual outfit this {gender_word} would wear to school "
             "or to hang out with friends"
         )
-    if outfit_key == "uniform":
+    if base_key == "uniform":
         return (
             f"a school or work uniform that fits this {gender_word}'s age and vibe, "
             "with clean lines and a coordinated look"
         )
-    if outfit_key == "athletic":
+    if base_key == "athletic":
         return (
             f"a sporty and practical athletic outfit this {gender_word} would wear "
             "for PE, training, or a casual game"
         )
-    if outfit_key == "swimsuit":
+    if base_key == "swimsuit":
         return (
             f"a modest but cute swimsuit this {gender_word} would wear to swim practice "
             "or a beach episode, nothing too revealing"

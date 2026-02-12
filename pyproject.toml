@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "Tommy"}
+    {name = "FriendOfSnom"}
 ]
 keywords = ["sprite", "visual-novel", "ai", "gemini", "character-generator"]
 classifiers = [
@@ -38,7 +38,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tommy/sprite-creator"
+Homepage = "https://github.com/FriendOfSnom/Auto-Sprite-Tools"
 
 [project.gui-scripts]
 sprite-creator = "sprite_creator.__main__:main"

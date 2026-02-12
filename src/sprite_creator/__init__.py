@@ -14,7 +14,7 @@ Package Structure:
     tester/     - Ren'Py sprite testing
 """
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 # Lazy imports for heavy dependencies
 def __getattr__(name):

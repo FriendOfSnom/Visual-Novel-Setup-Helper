@@ -37,6 +37,10 @@ def main():
         print("[INFO] User declined terms. Exiting.")
         return
 
+    # Step 1.5: Show welcome/README on first launch
+    from .ui.welcome import show_welcome_if_needed
+    show_welcome_if_needed()
+
     # Step 2: Show launcher to select tool
     def on_sprite_creator():
         pass  # Callback not used, we check result
@@ -47,13 +51,18 @@ def main():
     def on_sprite_tester():
         pass
 
-    launcher = LauncherWindow(on_sprite_creator, on_expression_sheets, on_sprite_tester)
+    def on_add_to_existing():
+        pass
+
+    launcher = LauncherWindow(on_sprite_creator, on_expression_sheets, on_sprite_tester, on_add_to_existing)
     selected_tool = launcher.run()
 
     if not selected_tool:
+        log_info("LAUNCHER: No tool selected, exiting")
         print("[INFO] No tool selected. Exiting.")
         return
 
+    log_info(f"LAUNCHER: Selected mode: {selected_tool}")
     print(f"[INFO] Selected tool: {selected_tool}")
 
     # Handle each tool
@@ -63,6 +72,8 @@ def main():
         run_expression_sheets()
     elif selected_tool == "sprite_tester":
         run_sprite_tester()
+    elif selected_tool == "add_to_existing":
+        run_add_to_existing()
 
 
 def run_sprite_creator():
@@ -225,6 +236,152 @@ def run_sprite_tester():
         log_exception(f"Error in sprite tester: {e}")
         messagebox.showerror("Error", f"An error occurred:\n{e}")
         print(f"[ERROR] {e}")
+
+    # Return to launcher
+    main()
+
+
+def run_add_to_existing():
+    """Run the 'Add to Existing Character' wizard."""
+    import yaml
+    from .ui.api_setup import ensure_api_key
+    from .ui.full_wizard import run_add_to_existing_wizard
+
+    print("\n[INFO] Starting Add to Existing Character...")
+
+    # Ensure API key is configured
+    api_key = ensure_api_key()
+    if not api_key:
+        print("[INFO] API key setup cancelled. Returning to launcher.")
+        main()
+        return
+
+    # Explain what folder to select before opening the dialog
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showinfo(
+        "Select Character Folder",
+        "Select the CHARACTER FOLDER that contains the character you want to add to.\n\n"
+        "This should be a folder with character.yml inside it.",
+        parent=root,
+    )
+    folder = filedialog.askdirectory(
+        title="Select existing character folder to add content to"
+    )
+    root.destroy()
+
+    if not folder:
+        print("[INFO] No folder selected. Returning to launcher.")
+        main()
+        return
+
+    folder_path = Path(folder)
+
+    # Validate: must have character.yml
+    char_yml_path = folder_path / "character.yml"
+    if not char_yml_path.exists():
+        messagebox.showerror(
+            "Invalid Character Folder",
+            "No character.yml found in selected folder.\n\n"
+            "Please select a valid character folder."
+        )
+        main()
+        return
+
+    # Parse character.yml
+    try:
+        with open(char_yml_path, 'r', encoding='utf-8') as f:
+            char_data = yaml.safe_load(f) or {}
+    except Exception as e:
+        messagebox.showerror(
+            "Error Reading Character",
+            f"Failed to read character.yml:\n{e}"
+        )
+        main()
+        return
+
+    # Validate: must have at least one pose directory with expressions
+    pose_dirs = []
+    for letter in "abcdefghijklmnopqrstuvwxyz":
+        pose_dir = folder_path / letter
+        if pose_dir.is_dir():
+            # Check for faces/face/ with at least one image
+            face_dir = pose_dir / "faces" / "face"
+            if face_dir.is_dir():
+                expr_files = list(face_dir.glob("*.png")) + list(face_dir.glob("*.webp"))
+                if expr_files:
+                    pose_dirs.append(letter)
+
+    if not pose_dirs:
+        messagebox.showerror(
+            "Invalid Character Structure",
+            "No valid poses found in character folder.\n\n"
+            "Expected structure:\n"
+            "  <character>/a/faces/face/*.png\n"
+            "  <character>/b/faces/face/*.png\n"
+            "  etc."
+        )
+        main()
+        return
+
+    # Determine next available pose letter
+    last_pose = max(pose_dirs)
+    next_letter = chr(ord(last_pose) + 1)
+    if next_letter > 'z':
+        messagebox.showerror(
+            "Cannot Add More Outfits",
+            "This character already has poses a-z.\n"
+            "Cannot add more outfits (letter limit reached)."
+        )
+        main()
+        return
+
+    # Extract key data from character.yml
+    sprite_creator_poses = char_data.get('sprite_creator_poses', [])
+    display_name = char_data.get('display_name', folder_path.name)
+    existing_voice = char_data.get('voice', 'girl')
+    existing_scale = char_data.get('scale', 1.0)
+    existing_eye_line = char_data.get('eye_line', 0.0)
+    existing_name_color = char_data.get('name_color', '#ffffff')
+    existing_archetype = char_data.get('archetype', '')  # Empty if not created by this app
+
+    print(f"[INFO] Character: {display_name}")
+    print(f"[INFO] Existing poses: {', '.join(pose_dirs)}")
+    print(f"[INFO] Next pose letter: {next_letter}")
+    print(f"[INFO] Sprite Creator poses: {sprite_creator_poses}")
+
+    # Run the add-to-existing wizard
+    try:
+        result = run_add_to_existing_wizard(
+            existing_folder=folder_path,
+            api_key=api_key,
+            char_data=char_data,
+            existing_poses=pose_dirs,
+            next_pose_letter=next_letter,
+            sprite_creator_poses=sprite_creator_poses,
+            display_name=display_name,
+            existing_voice=existing_voice,
+            existing_scale=existing_scale,
+            existing_eye_line=existing_eye_line,
+            existing_name_color=existing_name_color,
+            existing_archetype=existing_archetype,
+        )
+        if result:
+            log_info(f"Add to existing complete: {display_name}")
+            print("\n[INFO] Add to existing character complete!")
+            print(f"[INFO] Character: {display_name}")
+        else:
+            log_info("Add to existing wizard cancelled by user")
+            print("[INFO] Wizard cancelled by user.")
+    except SystemExit:
+        log_info("Add to existing wizard exited via SystemExit")
+        print("[INFO] Wizard exited.")
+    except Exception as e:
+        log_exception(f"Error in add to existing wizard: {e}")
+        messagebox.showerror("Error", f"An error occurred:\n{e}")
+        print(f"[ERROR] {e}")
+        import traceback
+        traceback.print_exc()
 
     # Return to launcher
     main()

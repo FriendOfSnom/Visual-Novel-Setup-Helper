@@ -7,7 +7,7 @@ and UI calculations for the dark theme design.
 
 import tkinter as tk
 from tkinter import ttk
-from typing import Tuple, Callable, Optional, List
+from typing import Dict, Tuple, Callable, Optional, List
 
 from ..config import (
     # Colors
@@ -592,17 +592,25 @@ def show_help_modal(parent: tk.Widget, title: str, help_text: str) -> None:
     content.bind("<Button-4>", on_mousewheel_linux_up)
     content.bind("<Button-5>", on_mousewheel_linux_down)
 
+    # Close function that properly releases grab
+    def close_overlay():
+        overlay.grab_release()
+        overlay.destroy()
+
     # Close button
     close_btn = create_primary_button(
         content,
         "Got it",
-        overlay.destroy,
+        close_overlay,
         width=12,
     )
     close_btn.pack(pady=(0, 8))
 
     # Escape to close
-    overlay.bind("<Escape>", lambda e: overlay.destroy())
+    overlay.bind("<Escape>", lambda e: close_overlay())
+
+    # Handle window X button (WM_DELETE_WINDOW) to properly release grab
+    overlay.protocol("WM_DELETE_WINDOW", close_overlay)
 
     # Focus the overlay to ensure it receives events
     overlay.focus_set()
@@ -727,20 +735,274 @@ def show_error_dialog(
     )
     copy_btn.pack(side="left")
 
+    # Close function that properly releases grab
+    def close_dialog():
+        dialog.grab_release()
+        dialog.destroy()
+
     ok_btn = create_primary_button(
         btn_frame,
         "OK",
-        dialog.destroy,
+        close_dialog,
         width=10,
     )
     ok_btn.pack(side="right")
 
     # Escape to close
-    dialog.bind("<Escape>", lambda e: dialog.destroy())
-    dialog.bind("<Return>", lambda e: dialog.destroy())
+    dialog.bind("<Escape>", lambda e: close_dialog())
+    dialog.bind("<Return>", lambda e: close_dialog())
+
+    # Handle window X button (WM_DELETE_WINDOW) to properly release grab
+    dialog.protocol("WM_DELETE_WINDOW", close_dialog)
 
     # Focus dialog
     dialog.focus_set()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TOGGLE CHIPS (for expression/outfit selection grids)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ToggleChip(tk.Frame):
+    """
+    A clickable chip/tag widget that toggles between selected and unselected.
+
+    Used for expression selection grids and outfit toggles.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        text: str,
+        selected: bool = False,
+        on_toggle: Optional[Callable] = None,
+        enabled: bool = True,
+    ):
+        super().__init__(parent, bg=CARD_BG, padx=8, pady=4, cursor="hand2" if enabled else "arrow")
+        self._selected = selected
+        self._on_toggle = on_toggle
+        self._enabled = enabled
+        self._text = text
+
+        self._label = tk.Label(
+            self,
+            text=text,
+            bg=CARD_BG,
+            fg=TEXT_COLOR if selected else TEXT_SECONDARY,
+            font=SMALL_FONT_BOLD if selected else SMALL_FONT,
+            cursor="hand2" if enabled else "arrow",
+        )
+        self._label.pack()
+
+        if enabled:
+            self.bind("<Button-1>", self._handle_click)
+            self._label.bind("<Button-1>", self._handle_click)
+            self.bind("<Enter>", self._on_enter)
+            self.bind("<Leave>", self._on_leave)
+            self._label.bind("<Enter>", self._on_enter)
+            self._label.bind("<Leave>", self._on_leave)
+
+        self._update_appearance()
+
+    def _handle_click(self, event=None):
+        if not self._enabled:
+            return
+        self._selected = not self._selected
+        self._update_appearance()
+        if self._on_toggle:
+            self._on_toggle(self._selected)
+
+    def _on_enter(self, event=None):
+        if not self._enabled:
+            return
+        if not self._selected:
+            self.configure(highlightbackground=TEXT_SECONDARY, highlightthickness=1)
+
+    def _on_leave(self, event=None):
+        self._update_appearance()
+
+    def _update_appearance(self):
+        if self._selected:
+            self.configure(bg=CARD_BG, highlightbackground=ACCENT_COLOR, highlightthickness=2)
+            self._label.configure(bg=CARD_BG, fg=ACCENT_COLOR, font=SMALL_FONT_BOLD)
+        else:
+            self.configure(bg=CARD_BG, highlightbackground=BORDER_COLOR, highlightthickness=1)
+            self._label.configure(bg=CARD_BG, fg=TEXT_SECONDARY, font=SMALL_FONT)
+
+    @property
+    def selected(self) -> bool:
+        return self._selected
+
+    @selected.setter
+    def selected(self, value: bool):
+        self._selected = value
+        self._update_appearance()
+
+    def set_enabled(self, enabled: bool) -> None:
+        """Enable or disable the chip (greyed out when disabled)."""
+        self._enabled = enabled
+        if enabled:
+            self.configure(cursor="hand2")
+            self._label.configure(cursor="hand2")
+            self.bind("<Button-1>", self._handle_click)
+            self._label.bind("<Button-1>", self._handle_click)
+            self.bind("<Enter>", self._on_enter)
+            self.bind("<Leave>", self._on_leave)
+            self._label.bind("<Enter>", self._on_enter)
+            self._label.bind("<Leave>", self._on_leave)
+            self._update_appearance()
+        else:
+            self.configure(cursor="arrow")
+            self._label.configure(cursor="arrow")
+            self.unbind("<Button-1>")
+            self._label.unbind("<Button-1>")
+            self.unbind("<Enter>")
+            self.unbind("<Leave>")
+            self._label.unbind("<Enter>")
+            self._label.unbind("<Leave>")
+            # Grey out appearance
+            self.configure(bg="#1a1a1a", highlightbackground="#333333", highlightthickness=1)
+            self._label.configure(bg="#1a1a1a", fg="#555555", font=SMALL_FONT)
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+
+def create_toggle_chip(
+    parent: tk.Widget,
+    text: str,
+    selected: bool = False,
+    on_toggle: Optional[Callable] = None,
+    enabled: bool = True,
+) -> ToggleChip:
+    """Create a toggle chip widget."""
+    return ToggleChip(parent, text, selected, on_toggle, enabled)
+
+
+class FilledChip(tk.Frame):
+    """A non-interactive chip showing an existing/completed item."""
+
+    def __init__(self, parent: tk.Widget, text: str):
+        super().__init__(parent, bg="#2d5a2d", padx=8, pady=4,
+                         highlightbackground="#44bb44", highlightthickness=1)
+        tk.Label(
+            self,
+            text=text,
+            bg="#2d5a2d",
+            fg="#88dd88",
+            font=SMALL_FONT,
+        ).pack()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SEGMENTED CONTROL (for outfit mode selection)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SegmentedControl(tk.Frame):
+    """
+    A segmented control widget with mutually exclusive options.
+
+    Used for outfit mode selection (Random | Custom | Standard).
+    """
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        options: List[str],
+        default: str = "",
+        on_change: Optional[Callable] = None,
+    ):
+        super().__init__(parent, bg=BG_COLOR)
+        self._buttons: Dict[str, tk.Button] = {}
+        self._selected = default or (options[0] if options else "")
+        self._on_change = on_change
+
+        for opt in options:
+            btn = tk.Button(
+                self,
+                text=opt,
+                command=lambda o=opt: self._select(o),
+                bg=ACCENT_COLOR if opt == self._selected else SECONDARY_COLOR,
+                fg=TEXT_COLOR,
+                activebackground=ACCENT_HOVER if opt == self._selected else SECONDARY_HOVER,
+                activeforeground=TEXT_COLOR,
+                font=SMALL_FONT_BOLD,
+                relief="flat",
+                cursor="hand2",
+                bd=0,
+                padx=8,
+                pady=2,
+            )
+            btn.pack(side="left", padx=(0, 1))
+            self._buttons[opt] = btn
+
+        self._update_appearance()
+
+    def _select(self, option: str):
+        self._selected = option
+        self._update_appearance()
+        if self._on_change:
+            self._on_change(option)
+
+    def _update_appearance(self):
+        for opt, btn in self._buttons.items():
+            if opt == self._selected:
+                btn.configure(bg=ACCENT_COLOR, activebackground=ACCENT_HOVER)
+                btn.bind("<Enter>", lambda e, b=btn: b.configure(bg=ACCENT_HOVER))
+                btn.bind("<Leave>", lambda e, b=btn: b.configure(bg=ACCENT_COLOR))
+            else:
+                btn.configure(bg=SECONDARY_COLOR, activebackground=SECONDARY_HOVER)
+                btn.bind("<Enter>", lambda e, b=btn: b.configure(bg=SECONDARY_HOVER))
+                btn.bind("<Leave>", lambda e, b=btn: b.configure(bg=SECONDARY_COLOR))
+
+    @property
+    def selected(self) -> str:
+        return self._selected
+
+    @selected.setter
+    def selected(self, value: str):
+        self._selected = value
+        self._update_appearance()
+
+    def add_option(self, option: str):
+        """Add a new option to the segmented control."""
+        btn = tk.Button(
+            self,
+            text=option,
+            command=lambda o=option: self._select(o),
+            bg=SECONDARY_COLOR,
+            fg=TEXT_COLOR,
+            activebackground=SECONDARY_HOVER,
+            activeforeground=TEXT_COLOR,
+            font=SMALL_FONT_BOLD,
+            relief="flat",
+            cursor="hand2",
+            bd=0,
+            padx=8,
+            pady=2,
+        )
+        btn.pack(side="left", padx=(0, 1))
+        self._buttons[option] = btn
+        self._update_appearance()
+
+    def remove_option(self, option: str):
+        """Remove an option from the segmented control."""
+        if option in self._buttons:
+            self._buttons[option].destroy()
+            del self._buttons[option]
+            if self._selected == option and self._buttons:
+                self._select(next(iter(self._buttons)))
+
+
+def create_segmented_control(
+    parent: tk.Widget,
+    options: List[str],
+    default: str = "",
+    on_change: Optional[Callable] = None,
+) -> SegmentedControl:
+    """Create a segmented control widget."""
+    return SegmentedControl(parent, options, default, on_change)
 
     # Wait for dialog to close (blocking like messagebox)
     dialog.wait_window()

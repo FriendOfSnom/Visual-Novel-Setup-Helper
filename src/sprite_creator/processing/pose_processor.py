@@ -49,6 +49,10 @@ def write_character_yml(
     poses: Dict[str, Dict[str, str]],
     *,
     game: Optional[str] = None,
+    archetype: Optional[str] = None,
+    sprite_creator_poses: Optional[List[str]] = None,
+    original_size: Optional[List[int]] = None,
+    backup_id: Optional[str] = None,
 ) -> None:
     """
     Write final character metadata YAML in organizer format.
@@ -62,6 +66,10 @@ def write_character_yml(
         scale: Character scale multiplier.
         poses: Dict of pose letters to pose metadata.
         game: Optional game name to include in metadata.
+        archetype: Optional archetype label (e.g., "Young Woman", "Adult Man").
+        sprite_creator_poses: Optional list of pose letters created by Sprite Creator.
+        original_size: Optional [width, height] of original full-size images before scaling.
+        backup_id: Optional UUID key for external backup storage.
     """
     v = (voice or "").lower()
     voice_out = "male" if v == "boy" else voice
@@ -76,6 +84,14 @@ def write_character_yml(
     }
     if game:
         data["game"] = game
+    if archetype:
+        data["archetype"] = archetype
+    if sprite_creator_poses:
+        data["sprite_creator_poses"] = sorted(sprite_creator_poses)
+    if original_size:
+        data["original_size"] = original_size
+    if backup_id:
+        data["backup_id"] = backup_id
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -93,6 +109,7 @@ def _generate_outfit_with_safety_recovery(
     archetype_label: str,
     outfit_prompt_config: Dict[str, Dict[str, Optional[str]]],
     skip_background_removal: bool = False,
+    tier_progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> Optional[Tuple[bytes, str]]:
     """
     Generate outfit with multi-tier safety error recovery.
@@ -150,8 +167,16 @@ def _generate_outfit_with_safety_recovery(
         tier0_prompts = UNDERWEAR_TIER0_PROMPTS.get(archetype_label, [])
         fallback_tiers = UNDERWEAR_FALLBACK_TIERS.get(archetype_label, ["Pink undergarments"])
 
+        # Calculate total attempts for progress reporting
+        total_attempts = 2 + len(fallback_tiers)
+        current_attempt = 0
+
         # Tier 0: 2 random attempts with variety
         for attempt in range(2):
+            current_attempt += 1
+            if tier_progress_callback:
+                tier_progress_callback(current_attempt, total_attempts)
+
             if tier0_prompts:
                 base_prompt = random.choice(tier0_prompts)
             else:
@@ -172,6 +197,10 @@ def _generate_outfit_with_safety_recovery(
         for tier_idx, tier_prompt in enumerate(fallback_tiers):
             if tier_prompt in tried_prompts:
                 continue
+
+            current_attempt += 1
+            if tier_progress_callback:
+                tier_progress_callback(current_attempt, total_attempts)
 
             print(f"  [Underwear] Tier {tier_idx + 1}: \"{tier_prompt}\"")
             img_bytes = try_generate(tier_prompt, f"Tier {tier_idx + 1}")
@@ -220,6 +249,7 @@ def generate_single_outfit(
     outfit_prompt_config: Dict[str, Dict[str, Optional[str]]],
     archetype_label: str,
     for_interactive_review: bool = False,
+    tier_progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> Optional[Path] | Optional[Tuple[Path, bytes, bytes, str]]:
     """
     Generate or regenerate a single outfit image for the given key.
@@ -249,7 +279,8 @@ def generate_single_outfit(
     config = outfit_prompt_config.get(outfit_key, {})
 
     # Special handling for standardized school uniform
-    if outfit_key == "uniform" and config.get("use_standard_uniform"):
+    # Check use_standard_uniform flag directly - works for "uniform", "uniform2", etc.
+    if config.get("use_standard_uniform"):
         result = generate_standard_uniform_outfit(
             api_key,
             base_pose_path,
@@ -257,6 +288,7 @@ def generate_single_outfit(
             gender_style,
             archetype_label,
             outfit_desc,
+            outfit_key=outfit_key,  # Pass key for correct filename (uniform2, etc.)
             for_interactive_review=for_interactive_review,
         )
         if result is None:
@@ -285,6 +317,7 @@ def generate_single_outfit(
                 archetype_label,
                 outfit_prompt_config,
                 skip_background_removal=True,
+                tier_progress_callback=tier_progress_callback,
             )
 
             if result is None:
@@ -310,6 +343,7 @@ def generate_single_outfit(
                 outfit_desc,
                 archetype_label,
                 outfit_prompt_config,
+                tier_progress_callback=tier_progress_callback,
             )
 
             if result is None:
@@ -334,6 +368,7 @@ def generate_standard_uniform_outfit(
     gender_style: str,
     archetype_label: str,
     outfit_desc: str,  # Kept for signature compatibility
+    outfit_key: str = "uniform",  # The actual outfit key (uniform, uniform2, etc.)
     for_interactive_review: bool = False,
 ) -> Path | Tuple[Path, bytes, bytes]:
     """
@@ -372,13 +407,13 @@ def generate_standard_uniform_outfit(
         if for_interactive_review:
             original_bytes = call_gemini_image_edit(api_key, prompt, image_b64, skip_background_removal=True)
             rembg_bytes = strip_background_ai(original_bytes, skip_edge_cleanup=True)
-            out_stem = outfits_dir / "Uniform"
+            out_stem = outfits_dir / outfit_key.capitalize()
             final_path = save_image_bytes_as_png(rembg_bytes, out_stem)
             print(f"  Saved fallback prompt-based uniform to: {final_path}")
             return (final_path, original_bytes, rembg_bytes)
         else:
             img_bytes = call_gemini_image_edit(api_key, prompt, image_b64)
-            out_stem = outfits_dir / "Uniform"
+            out_stem = outfits_dir / outfit_key.capitalize()
             final_path = save_image_bytes_as_png(img_bytes, out_stem)
             print(f"  Saved fallback prompt-based uniform to: {final_path}")
             return final_path
@@ -406,7 +441,7 @@ def generate_standard_uniform_outfit(
             skip_background_removal=True,
         )
         rembg_bytes = strip_background_ai(original_bytes, skip_edge_cleanup=True)
-        out_stem = outfits_dir / "Uniform"
+        out_stem = outfits_dir / outfit_key.capitalize()
         final_path = save_image_bytes_as_png(rembg_bytes, out_stem)
         print(f"  Saved standardized school uniform to: {final_path}")
         return (final_path, original_bytes, rembg_bytes)
@@ -416,7 +451,7 @@ def generate_standard_uniform_outfit(
             uniform_prompt,
             image_b64,
         )
-        out_stem = outfits_dir / "Uniform"
+        out_stem = outfits_dir / outfit_key.capitalize()
         final_path = save_image_bytes_as_png(img_bytes, out_stem)
         print(f"  Saved standardized school uniform to: {final_path}")
         return final_path
@@ -493,6 +528,11 @@ def generate_outfits_once(
         if progress_callback:
             progress_callback(idx + 1, total_outfits, key)
 
+        # Create tier progress callback for underwear to report attempt numbers
+        def _tier_cb(attempt: int, total: int, outfit=key) -> None:
+            if progress_callback:
+                progress_callback(idx + 1, total_outfits, f"{outfit} (Attempt {attempt} of {total})")
+
         result = generate_single_outfit(
             api_key,
             base_pose_path,
@@ -503,6 +543,7 @@ def generate_outfits_once(
             outfit_prompt_config,
             archetype_label,
             for_interactive_review=for_interactive_review,
+            tier_progress_callback=_tier_cb if key == "underwear" else None,
         )
 
         if result is None:
@@ -521,7 +562,10 @@ def generate_outfits_once(
     return paths
 
 
-def flatten_pose_outfits_to_letter_poses(char_dir: Path) -> List[str]:
+def flatten_pose_outfits_to_letter_poses(
+    char_dir: Path,
+    starting_letter: str = "a",
+) -> List[str]:
     """
     Flatten pose/outfit combos into separate letter poses with single outfits.
 
@@ -536,6 +580,8 @@ def flatten_pose_outfits_to_letter_poses(char_dir: Path) -> List[str]:
 
     Args:
         char_dir: Character directory.
+        starting_letter: First letter to use for pose assignment (default 'a').
+            Use this when adding to an existing character (e.g., 'd' if existing has a,b,c).
 
     Returns:
         List of final pose letters (sorted).
@@ -552,7 +598,9 @@ def flatten_pose_outfits_to_letter_poses(char_dir: Path) -> List[str]:
     tmp_root.mkdir(parents=True, exist_ok=True)
 
     letters = [chr(ord("a") + i) for i in range(26)]
-    next_index = 0
+    # Start from the specified letter
+    start_index = ord(starting_letter.lower()) - ord('a')
+    next_index = max(0, min(start_index, 25))  # Clamp to valid range
 
     def _next_letter() -> Optional[str]:
         nonlocal next_index

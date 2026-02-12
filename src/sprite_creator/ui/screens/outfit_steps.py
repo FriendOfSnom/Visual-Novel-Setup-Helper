@@ -203,7 +203,7 @@ class CustomRegenModal:
 
 class OutfitReviewStep(WizardStep):
     """
-    Step 8: Outfit Review.
+    Step 6: Outfit Review.
 
     Displays all generated outfits with per-outfit controls:
     - Regenerate (same prompt)
@@ -216,12 +216,13 @@ class OutfitReviewStep(WizardStep):
 
     STEP_ID = "outfit_review"
     STEP_TITLE = "Outfits"
+    STEP_NUMBER = 6
     STEP_HELP = """Outfit Review
 
 This step shows all generated outfits. Scroll horizontally to see them all.
 
 IMPORTANT: You can do touch-ups on the NEXT step!
-Don't worry about getting backgrounds perfect here. The Expression Review step has "Touch Up BG" and "Remove BG" buttons for each expression, so you can fix any issues there.
+Don't worry about getting backgrounds perfect here. The Expression Review step has a "Remove BG" button for each expression, so you can fix any issues there.
 
 Focus on:
 • Approving outfits you like
@@ -416,17 +417,32 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         self._canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def on_enter(self) -> None:
-        """Generate outfits when step becomes active."""
-        # Check if we need to regenerate (user changed something upstream)
-        if self.state.is_step_dirty(self._get_step_index()):
-            self.state.outfits_generated = False
-            self._start_outfit_generation()
-            return
+        """Generate outfits when step becomes active.
 
-        # Check if we already have valid outfits (prevents regeneration on back navigation)
-        if (self.state.outfits_generated and
+        Smart regeneration: detects if outfit selections changed since last
+        generation and regenerates only when needed.
+        """
+        # Check if we already have valid outfits on disk
+        has_valid_outfits = (
+            self.state.outfits_generated and
             self.state.outfit_paths and
-            all(p.exists() for p in self.state.outfit_paths)):
+            all(p.exists() for p in self.state.outfit_paths)
+        )
+
+        if has_valid_outfits:
+            # Check if outfit selections changed since last generation
+            current_keys = []
+            if self.state.use_base_as_outfit:
+                current_keys.append("base")
+            current_keys.extend(self.state.selected_outfits)
+
+            if current_keys != self.state.generated_outfit_keys:
+                # Selections changed - need full regeneration
+                self.state.outfits_generated = False
+                self._start_outfit_generation()
+                return
+
+            # No changes - reuse existing outfits
             self._load_existing_outfits()
             return
 
@@ -471,6 +487,7 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         from ...api import build_outfit_prompts_with_config
         from ..api_setup import ensure_api_key
 
+        log_info(f"OUTFIT_GEN: {len(self.state.selected_outfits)} outfits, base={self.state.use_base_as_outfit}")
         log_generation_start("outfits", count=len(self.state.selected_outfits))
 
         if not self.state.api_key:
@@ -485,8 +502,8 @@ When satisfied with all outfits, click Next to proceed to expression generation.
             )
         self.state.character_folder.mkdir(parents=True, exist_ok=True)
 
-        # Copy base pose to character folder if not already there
-        base_dest = self.state.character_folder / "a_base.png"
+        # Copy base pose to character folder as base.png if not already there
+        base_dest = self.state.character_folder / "base.png"
         if self.state.base_pose_path and self.state.base_pose_path.exists() and not base_dest.exists():
             import shutil
             shutil.copy2(self.state.base_pose_path, base_dest)
@@ -504,7 +521,12 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         )
 
         # Create outfits directory
-        outfits_dir = self.state.character_folder / "a" / "outfits"
+        # In add-to-existing mode, use next available pose letter instead of "a"
+        if self.state.is_adding_to_existing:
+            pose_letter = self.state.next_pose_letter or "a"
+        else:
+            pose_letter = "a"
+        outfits_dir = self.state.character_folder / pose_letter / "outfits"
         outfits_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate outfits using the base pose
@@ -546,6 +568,22 @@ When satisfied with all outfits, click Next to proceed to expression generation.
             generated_keys.append("base")
         generated_keys.extend(used_prompts.keys())
         self.state.generated_outfit_keys = generated_keys
+
+        # Detect skipped outfits
+        expected_keys = list(self.state.selected_outfits)
+        actually_generated = set(used_prompts.keys())
+        skipped = [k for k in expected_keys if k not in actually_generated]
+        log_info(f"OUTFIT_GEN: Done. Keys={generated_keys}, Skipped={skipped}")
+
+        # Notify user about skipped outfits
+        if skipped:
+            names = ", ".join(k.replace("_", " ").title() for k in skipped)
+            messagebox.showinfo(
+                "Some Outfits Skipped",
+                f"Could not generate: {names}\n\n"
+                f"These were blocked by content filters. You can go back to Options "
+                f"and try a different outfit type, or use 'Custom...' on another outfit."
+            )
 
         # Initialize current bytes from rembg results
         self._current_bytes = [rembg_bytes for _, rembg_bytes in cleanup_data]
@@ -929,7 +967,13 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         outfit_names = self.state.generated_outfit_keys.copy() if self.state.generated_outfit_keys else []
 
         outfit_key = outfit_names[idx]
-        outfits_dir = self.state.character_folder / "a" / "outfits"
+        log_info(f"OUTFIT_REGEN: '{outfit_key}', same={same_prompt}")
+        # Use next_pose_letter in add-to-existing mode
+        if self.state.is_adding_to_existing:
+            pose_letter = self.state.next_pose_letter or "a"
+        else:
+            pose_letter = "a"
+        outfits_dir = self.state.character_folder / pose_letter / "outfits"
         config = self.state.outfit_prompt_config.get(outfit_key, {})
         use_random = config.get("use_random", True)
 
@@ -998,6 +1042,9 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         if same_prompt and self.state.outfit_prompts and outfit_key in self.state.outfit_prompts:
             # Use existing prompt
             outfit_desc = self.state.outfit_prompts[outfit_key]
+        elif not same_prompt and outfit_key in self.state.custom_outfit_prompts and outfit_key in self.state.outfit_prompts:
+            # "Regen New Outfit" but user set a custom prompt - reuse it
+            outfit_desc = self.state.outfit_prompts[outfit_key]
         else:
             # Generate new random prompt via Gemini text API
             new_prompt_dict = build_outfit_prompts_with_config(
@@ -1054,6 +1101,9 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         if not self.state.outfit_prompts:
             self.state.outfit_prompts = {}
         self.state.outfit_prompts[outfit_key] = used_prompt
+
+        # Mark this outfit's expressions as needing regeneration
+        self.state.outfits_needing_expression_regen.add(outfit_key)
 
         # After regeneration, switch back to auto mode for this outfit
         # (regen always produces auto-removed BG as the result)
@@ -1115,7 +1165,13 @@ When satisfied with all outfits, click Next to proceed to expression generation.
 
         outfit_names = self.state.generated_outfit_keys.copy() if self.state.generated_outfit_keys else []
         outfit_key = outfit_names[idx]
-        outfits_dir = self.state.character_folder / "a" / "outfits"
+        log_info(f"OUTFIT_CUSTOM: '{outfit_key}', prompt={custom_prompt[:100]}")
+        # Use next_pose_letter in add-to-existing mode
+        if self.state.is_adding_to_existing:
+            pose_letter = self.state.next_pose_letter or "a"
+        else:
+            pose_letter = "a"
+        outfits_dir = self.state.character_folder / pose_letter / "outfits"
 
         # Use the custom prompt directly
         result = generate_single_outfit(
@@ -1143,6 +1199,9 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         if not self.state.outfit_prompts:
             self.state.outfit_prompts = {}
         self.state.outfit_prompts[outfit_key] = custom_prompt
+
+        # Track that this outfit has a user-provided custom prompt
+        self.state.custom_outfit_prompts.add(outfit_key)
 
         return new_path, (original_bytes, rembg_bytes), used_prompt
 

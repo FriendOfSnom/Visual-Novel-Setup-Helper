@@ -247,7 +247,7 @@ You can go back if you need to change your source image."""
 
     def should_skip(self) -> bool:
         """Skip crop step if already handled or no image available."""
-        # For image mode, crop is now done in CharacterStep (Step 2)
+        # For image mode, crop is now done in SetupStep (Step 3)
         if self.state.source_mode == "image":
             return True
         # For prompt mode, we skip crop until after base is generated

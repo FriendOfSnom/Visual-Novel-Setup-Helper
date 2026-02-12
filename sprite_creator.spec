@@ -21,6 +21,13 @@ SPEC_DIR = Path(SPECPATH)
 SRC_DIR = SPEC_DIR / 'src'
 PACKAGE_DIR = SRC_DIR / 'sprite_creator'
 
+# Get certifi certificate path for SSL in frozen app
+try:
+    import certifi
+    CERTIFI_PATH = certifi.where()
+except ImportError:
+    CERTIFI_PATH = None
+
 block_cipher = None
 
 # Analysis - find all imports
@@ -34,7 +41,7 @@ a = Analysis(
         (str(PACKAGE_DIR / 'data' / 'reference_sprites'), 'data/reference_sprites'),
         # Tester templates only (not the _test_project - it's generated at runtime)
         (str(PACKAGE_DIR / 'tools' / 'tester' / 'templates'), 'tools/tester/templates'),
-    ],
+    ] + ([(CERTIFI_PATH, 'certifi')] if CERTIFI_PATH else []),
     hiddenimports=[
         # Core dependencies
         'PIL',
@@ -50,6 +57,8 @@ a = Analysis(
         'requests',
         'bs4',
         'beautifulsoup4',
+        # SSL certificates (for SDK download in frozen app)
+        'certifi',
         # rembg and its dependencies
         'rembg',
         'rembg.session_factory',

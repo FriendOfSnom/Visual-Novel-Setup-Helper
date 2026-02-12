@@ -23,6 +23,7 @@ from PIL import Image as PILImage
 
 from .sdk_utils import SDK_VERSION, SDK_FOLDER_NAME, download_and_setup_sdk
 from ...config import get_resource_path
+from ...logging_utils import log_info, log_error, log_warning, log_debug
 
 
 def _get_base_path() -> Path:
@@ -57,6 +58,8 @@ WRITABLE_BASE = _get_writable_base()
 # Ensure writable base directory exists for frozen app
 try:
     WRITABLE_BASE.mkdir(parents=True, exist_ok=True)
+    # Log at module load time (logging may not be initialized yet)
+    print(f"[Sprite Tester] Writable base: {WRITABLE_BASE}")
 except Exception as e:
     print(f"[WARN] Could not create writable base directory {WRITABLE_BASE}: {e}")
 
@@ -447,21 +450,31 @@ init python:
             return outfits[0]
         return ""
 
-    def get_expression_count():
+    def get_expression_keys():
+        """Get sorted list of actual expression keys (e.g., [0, 1, 7, 14]) for current pose."""
         pose_name = get_current_pose()
         body = bodies.get("{var_name}")
         if body and pose_name in body.poses:
-            return len(body.poses[pose_name].faces)
-        return 13
+            # Get actual expression keys, sorted numerically
+            keys = sorted(body.poses[pose_name].faces.keys(), key=lambda x: int(x) if str(x).isdigit() else 999)
+            return keys if keys else [0]
+        return [0]
+
+    def get_current_expression_key():
+        """Get the actual expression key at current_expr_idx."""
+        keys = get_expression_keys()
+        if current_expr_idx < len(keys):
+            return keys[current_expr_idx]
+        return keys[0] if keys else 0
 
     def get_current_emotion():
-        return "{{}}_{{}}".format(get_current_pose(), current_expr_idx)
+        return "{{}}_{{}}".format(get_current_pose(), get_current_expression_key())
 
     def cycle_pose(direction):
         global current_pose_idx, current_expr_idx, current_outfit_idx
-        # Remember current state before changing pose
+        # Remember current expression KEY before changing pose
         old_outfit = get_current_outfit()
-        old_expr_idx = current_expr_idx
+        old_expr_key = get_current_expression_key()
         current_pose_idx = (current_pose_idx + direction) % len(test_poses)
         # Try to keep same outfit if it exists in new pose
         new_outfits = get_outfit_list()
@@ -469,18 +482,22 @@ init python:
             current_outfit_idx = new_outfits.index(old_outfit)
         else:
             current_outfit_idx = 0
-        # Try to keep same expression if valid in new pose
-        new_expr_count = get_expression_count()
-        if old_expr_idx < new_expr_count:
-            current_expr_idx = old_expr_idx
+        # Try to keep same expression KEY if it exists in new pose
+        new_keys = get_expression_keys()
+        if old_expr_key in new_keys:
+            current_expr_idx = new_keys.index(old_expr_key)
         else:
-            current_expr_idx = 0
+            # Fall back to expression 0 if it exists, otherwise first available
+            if 0 in new_keys:
+                current_expr_idx = new_keys.index(0)
+            else:
+                current_expr_idx = 0
         update_sprite()
 
     def cycle_expression(direction):
         global current_expr_idx
-        max_expr = get_expression_count()
-        current_expr_idx = (current_expr_idx + direction) % max_expr
+        keys = get_expression_keys()
+        current_expr_idx = (current_expr_idx + direction) % len(keys)
         update_sprite()
 
     def cycle_outfit(direction):
@@ -532,7 +549,7 @@ screen sprite_test():
                 spacing 20
                 text "Pose: [get_current_pose()]" size 16 color "#88ff88"
                 text "Outfit: [get_current_outfit()]" size 16 color "#88ff88"
-                text "Expression: [current_expr_idx]" size 16 color "#88ff88"
+                text "Expression: [get_current_expression_key()]" size 16 color "#88ff88"
             hbox:
                 xalign 0.5
                 spacing 20
@@ -701,10 +718,20 @@ def create_test_project(char_dir: Path) -> Path | None:
                 f.write(character_content)
             print("[INFO] Patched character.py to make yaml optional")
 
-    # Copy character folder
+    # Copy character folder (skip Windows reserved names and legacy _backups)
+    SKIP_NAMES = {"con", "prn", "aux", "nul", "_backups",
+                  *(f"com{i}" for i in range(1, 10)),
+                  *(f"lpt{i}" for i in range(1, 10))}
+
+    def _ignore_reserved(directory, contents):
+        """Skip files/dirs with Windows reserved device names or legacy _backups."""
+        return {name for name in contents
+                if name.lower() in SKIP_NAMES
+                or Path(name).stem.lower() in SKIP_NAMES}
+
     char_dest = images_dir / char_name
-    shutil.copytree(char_dir, char_dest)
-    print(f"[INFO] Copied character: {char_name}")
+    shutil.copytree(char_dir, char_dest, ignore=_ignore_reserved)
+    log_info(f"Copied character: {char_name}")
 
     # Generate test script
     script_content = generate_test_script(char_name, char_data, char_dir)
@@ -721,6 +748,24 @@ def create_test_project(char_dir: Path) -> Path | None:
     return TEST_PROJECT_DIR
 
 
+def _get_or_create_tk_root():
+    """Get the existing Tk root or create a new hidden one.
+
+    When called from the wizard, a Tk root already exists. Creating a second
+    tk.Tk() on Windows causes messageboxes to be invisible behind the main
+    window. This helper reuses the existing root when available.
+
+    Returns:
+        (root, created) - root widget and whether we created it (caller must destroy if True)
+    """
+    existing = tk._default_root
+    if existing is not None:
+        return existing, False
+    root = tk.Tk()
+    root.withdraw()
+    return root, True
+
+
 def launch_sprite_tester(char_dir: Path) -> bool:
     """
     Main entry point - launches the sprite tester for the given character.
@@ -728,13 +773,19 @@ def launch_sprite_tester(char_dir: Path) -> bool:
     Called from pipeline.py after expression sheet generation.
     Returns True if testing was performed, False if skipped.
     """
+    log_info(f"Sprite Tester: checking for Ren'Py SDK...")
+    log_info(f"SDK_DIR: {SDK_DIR}")
+    log_info(f"Frozen mode: {getattr(sys, 'frozen', False)}")
+
     # Check if Ren'Py SDK exists
     renpy_exe = find_renpy_executable()
+    log_info(f"Ren'Py executable: {renpy_exe}")
 
     # If SDK not found, offer to download it
     if not renpy_exe:
-        root = tk.Tk()
-        root.withdraw()
+        log_info("Ren'Py SDK not found, prompting for download...")
+
+        root, created = _get_or_create_tk_root()
 
         result = messagebox.askyesno(
             "Ren'Py SDK Required",
@@ -745,46 +796,51 @@ def launch_sprite_tester(char_dir: Path) -> bool:
             "to point to an existing SDK installation.",
             parent=root
         )
-        root.destroy()
+        if created:
+            root.destroy()
 
         if result:
-            print("\n[INFO] Downloading Ren'Py SDK...")
+            log_info("User accepted SDK download, starting...")
             success = download_and_setup_sdk(SDK_DIR)
             if success:
+                log_info("SDK download completed successfully")
                 renpy_exe = find_renpy_executable()
+                log_info(f"Ren'Py executable after download: {renpy_exe}")
             else:
-                print("[ERROR] SDK download failed")
+                log_error("SDK download failed")
                 # Show error dialog
-                root = tk.Tk()
-                root.withdraw()
+                root, created = _get_or_create_tk_root()
                 messagebox.showerror(
                     "SDK Download Failed",
                     f"Failed to download Ren'Py SDK.\n\n"
                     f"Please check your internet connection and try again.\n\n"
+                    f"Check the log file for details:\n"
+                    f"(logs/sprite_creator.log next to exe)\n\n"
                     f"You can also manually download the SDK from:\n"
                     f"https://www.renpy.org/latest.html\n\n"
                     f"And set the RENPY_SDK_PATH environment variable to point to it."
                 )
-                root.destroy()
+                if created:
+                    root.destroy()
                 return False
         else:
-            print("[INFO] SDK download declined, skipping sprite test")
+            log_info("SDK download declined by user, skipping sprite test")
             return False
 
     if not renpy_exe:
-        print(f"[ERROR] Ren'Py SDK still not found after download attempt")
+        log_error("Ren'Py SDK still not found after download attempt")
         return False
 
     # Check if templates exist
     if not TEMPLATES_DIR.exists():
-        print(f"[INFO] Templates not found at {TEMPLATES_DIR}, skipping sprite test")
+        log_error(f"Templates not found at {TEMPLATES_DIR}, skipping sprite test")
         return False
 
     # Ask user if they want to test
-    root = tk.Tk()
-    root.withdraw()  # Hide the main window
+    root, created = _get_or_create_tk_root()
 
     char_name = char_dir.name
+    log_info(f"Prompting user to test character '{char_name}'...")
     result = messagebox.askyesno(
         "Sprite Tester",
         f"Test character '{char_name}' in Ren'Py?\n\n"
@@ -793,23 +849,24 @@ def launch_sprite_tester(char_dir: Path) -> bool:
         parent=root
     )
 
-    root.destroy()
+    if created:
+        root.destroy()
 
     if not result:
-        print("[INFO] Sprite test skipped by user")
+        log_info("Sprite test skipped by user")
         return False
 
     # Create the test project
-    print("\n[INFO] Setting up sprite test project...")
+    log_info("Setting up sprite test project...")
     project_path = create_test_project(char_dir)
 
     if not project_path:
-        print("[ERROR] Failed to create test project")
+        log_error("Failed to create test project")
         return False
 
     # Launch Ren'Py
-    print(f"[INFO] Launching Ren'Py: {renpy_exe}")
-    print(f"[INFO] Project: {project_path}")
+    log_info(f"Launching Ren'Py: {renpy_exe}")
+    log_info(f"Project: {project_path}")
 
     try:
         # Run Ren'Py and wait for it to close
@@ -818,10 +875,10 @@ def launch_sprite_tester(char_dir: Path) -> bool:
             cwd=str(SDK_DIR),
             check=False
         )
-        print(f"[INFO] Ren'Py exited with code: {result.returncode}")
+        log_info(f"Ren'Py exited with code: {result.returncode}")
         return True
     except Exception as e:
-        print(f"[ERROR] Failed to launch Ren'Py: {e}")
+        log_error(f"Failed to launch Ren'Py: {e}")
         return False
 
 

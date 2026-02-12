@@ -17,7 +17,7 @@ from PIL import Image
 from rembg import remove as rembg_remove, new_session as rembg_new_session
 
 from ..config import CONFIG_PATH, GEMINI_API_URL
-from ..logging_utils import log_api_call, log_debug, log_warning, log_error
+from ..logging_utils import log_api_call, log_debug, log_info, log_warning, log_error
 from .exceptions import GeminiAPIError, GeminiSafetyError
 
 
@@ -650,6 +650,8 @@ def call_gemini_image_edit(
     Returns:
         Generated/edited image bytes (with transparent background unless skipped).
     """
+    log_info(f"GEMINI: image_edit prompt ({len(prompt)} chars): {prompt[:200]}...")
+    log_debug(f"GEMINI: Full image_edit prompt: {prompt}")
     parts: List[dict] = [
         {"text": prompt},
         {"inline_data": {"mime_type": "image/png", "data": image_b64}},
@@ -695,7 +697,8 @@ def call_gemini_text(
     }
 
     try:
-        log_debug("Gemini text API call starting")
+        log_info(f"GEMINI: text prompt ({len(prompt)} chars, temp={temperature}): {prompt[:200]}...")
+        log_debug(f"GEMINI: Full text prompt: {prompt}")
         response = requests.post(text_url, headers=headers, json=payload)
 
         if not response.ok:
@@ -724,6 +727,46 @@ def call_gemini_text(
         raise GeminiAPIError(f"Gemini text API call failed: {e}")
 
 
+def call_gemini_fusion(
+    api_key: str,
+    prompt: str,
+    left_image_b64: str,
+    right_image_b64: str,
+    skip_background_removal: bool = False,
+    edge_cleanup_tolerance: Optional[int] = None,
+    edge_cleanup_passes: Optional[int] = None,
+) -> bytes:
+    """
+    Call Gemini image model with two input images for character fusion.
+
+    Creates a new character that combines features from both input images.
+    AI background removal is automatically applied to the result unless skipped.
+
+    Args:
+        api_key: Google Gemini API key.
+        prompt: Text prompt describing the desired fusion.
+        left_image_b64: Base64-encoded left character image.
+        right_image_b64: Base64-encoded right character image.
+        skip_background_removal: If True, return raw image without background removal.
+        edge_cleanup_tolerance: Custom tolerance for edge cleanup (uses default if None).
+        edge_cleanup_passes: Custom passes for edge cleanup (uses default if None).
+
+    Returns:
+        Generated/fused image bytes (with transparent background unless skipped).
+    """
+    log_info(f"GEMINI: fusion prompt ({len(prompt)} chars): {prompt[:200]}...")
+    log_debug(f"GEMINI: Full fusion prompt: {prompt}")
+    parts: List[dict] = [
+        {"text": prompt},
+        {"inline_data": {"mime_type": "image/png", "data": left_image_b64}},
+        {"inline_data": {"mime_type": "image/png", "data": right_image_b64}},
+    ]
+    return _call_gemini_with_parts(
+        api_key, parts, "fusion", skip_background_removal,
+        edge_cleanup_tolerance, edge_cleanup_passes
+    )
+
+
 def call_gemini_text_or_refs(
     api_key: str,
     prompt: str,
@@ -749,6 +792,8 @@ def call_gemini_text_or_refs(
     Returns:
         Generated image bytes (with transparent background unless skipped).
     """
+    log_info(f"GEMINI: text_or_refs prompt ({len(prompt)} chars, refs={len(ref_images) if ref_images else 0}): {prompt[:200]}...")
+    log_debug(f"GEMINI: Full text_or_refs prompt: {prompt}")
     parts: List[dict] = [{"text": prompt}]
 
     # Add reference images if provided

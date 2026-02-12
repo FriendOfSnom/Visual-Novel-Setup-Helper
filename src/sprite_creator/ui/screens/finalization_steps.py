@@ -28,6 +28,8 @@ from ...config import (
     BODY_FONT,
     SMALL_FONT,
     REF_SPRITES_DIR,
+    get_backup_dir,
+    generate_backup_id,
 )
 from ..tk_common import (
     create_primary_button,
@@ -59,7 +61,7 @@ def compute_display_size(
 
 class EyeLineStep(WizardStep):
     """
-    Step 11: Eye Line & Name Color picker.
+    Step 8: Eye Line & Name Color picker.
 
     Two-click interaction:
     1. Click to set eye line (horizontal guide)
@@ -68,6 +70,7 @@ class EyeLineStep(WizardStep):
 
     STEP_ID = "eye_line"
     STEP_TITLE = "Finalize"
+    STEP_NUMBER = 8
     STEP_HELP = """Eye Line & Name Color
 
 This step sets two values used by visual novel engines.
@@ -372,13 +375,14 @@ If you need to redo:
 
 class ScaleStep(WizardStep):
     """
-    Step 12: Scale Selector.
+    Step 9: Scale Selector.
 
     Side-by-side comparison with reference sprites to set character scale.
     """
 
     STEP_ID = "scale"
     STEP_TITLE = "Scale"
+    STEP_NUMBER = 9
     STEP_HELP = """Character Scale
 
 This step sets how large your character appears in-game.
@@ -415,6 +419,21 @@ COMMON VALUES
 
 The exact value depends on your game's art style and existing characters.
 
+AUTOMATIC IMAGE SCALING
+When you set a scale below 1.0, all generated images are automatically
+resized using high-quality LANCZOS resampling. This reduces file sizes
+and ensures consistent display in-game.
+
+ADD-TO-EXISTING MODE
+When adding to an existing character:
+- Left canvas shows a scaled expression from the existing character
+- Right canvas shows your newly generated content
+- Scale is auto-calculated to match the existing character
+- Images are always scaled to ensure consistency
+
+The auto-calculated scale makes the new character appear the same
+size as the existing one in-game. You can fine-tune if needed.
+
 Click Next when the scale looks right."""
 
     def __init__(self, wizard, state: WizardState):
@@ -429,6 +448,16 @@ Click Next when the scale looks right."""
         self._img_refs: dict = {"ref": None, "usr": None}
         self._canv_w: int = 360
         self._canv_h: int = 360
+
+        # For add-to-existing mode
+        self._apply_scale_frame: Optional[tk.Frame] = None
+        self._ref_selector_frame: Optional[tk.Frame] = None
+        self._existing_ref_img: Optional[Image.Image] = None
+        self._left_label: Optional[tk.Label] = None
+        self._new_expr_selector_frame: Optional[tk.Frame] = None
+        self._new_expr_images: Dict[str, Image.Image] = {}  # label -> PIL Image
+        self._new_expr_var: Optional[tk.StringVar] = None
+        self._new_expr_menu: Optional[tk.OptionMenu] = None
 
     def build_ui(self, parent: tk.Frame) -> None:
         parent.configure(bg=BG_COLOR)
@@ -451,12 +480,12 @@ Click Next when the scale looks right."""
             font=SMALL_FONT,
         ).pack(pady=(0, 12))
 
-        # Reference selector
-        ref_frame = tk.Frame(parent, bg=BG_COLOR)
-        ref_frame.pack(pady=(0, 8))
+        # Reference selector (hidden in add-to-existing mode)
+        self._ref_selector_frame = tk.Frame(parent, bg=BG_COLOR)
+        self._ref_selector_frame.pack(pady=(0, 8))
 
         tk.Label(
-            ref_frame,
+            self._ref_selector_frame,
             text="Reference:",
             bg=BG_COLOR,
             fg=TEXT_COLOR,
@@ -464,9 +493,28 @@ Click Next when the scale looks right."""
         ).pack(side="left", padx=(0, 8))
 
         self._ref_var = tk.StringVar(value="")
-        self._ref_menu = tk.OptionMenu(ref_frame, self._ref_var, "")
+        self._ref_menu = tk.OptionMenu(self._ref_selector_frame, self._ref_var, "")
         self._ref_menu.configure(width=20, bg=CARD_BG, fg=TEXT_COLOR)
         self._ref_menu.pack(side="left")
+
+        # New expression selector (for add-to-existing mode, hidden by default)
+        self._new_expr_selector_frame = tk.Frame(parent, bg=BG_COLOR)
+        # Don't pack - shown in add-to-existing mode
+
+        tk.Label(
+            self._new_expr_selector_frame,
+            text="Preview expression:",
+            bg=BG_COLOR,
+            fg=TEXT_COLOR,
+            font=BODY_FONT,
+        ).pack(side="left", padx=(0, 8))
+
+        self._new_expr_var = tk.StringVar(value="")
+        self._new_expr_menu = tk.OptionMenu(
+            self._new_expr_selector_frame, self._new_expr_var, ""
+        )
+        self._new_expr_menu.configure(width=25, bg=CARD_BG, fg=TEXT_COLOR)
+        self._new_expr_menu.pack(side="left")
 
         # Canvas row
         canvas_frame = tk.Frame(parent, bg=BG_COLOR)
@@ -476,13 +524,14 @@ Click Next when the scale looks right."""
         left_col = tk.Frame(canvas_frame, bg=BG_COLOR)
         left_col.pack(side="left", fill="both", expand=True, padx=(0, 8))
 
-        tk.Label(
+        self._left_label = tk.Label(
             left_col,
             text="Reference",
             bg=BG_COLOR,
             fg=TEXT_SECONDARY,
             font=SMALL_FONT,
-        ).pack()
+        )
+        self._left_label.pack()
 
         self._ref_canvas = tk.Canvas(
             left_col,
@@ -554,12 +603,14 @@ Click Next when the scale looks right."""
         self._scale_label.pack(side="left", padx=(8, 0))
 
         # Apply scale to images checkbox - DEFAULT TO TRUE (scaling on by default)
+        # NOTE: Checkbox is hidden - scaling is ALWAYS mandatory for all modes
+        # We keep the frame/var for backend compatibility but never show it
         self._apply_scale_var = tk.BooleanVar(value=True)
-        apply_frame = tk.Frame(parent, bg=CARD_BG, padx=12, pady=8)
-        apply_frame.pack(fill="x", pady=(12, 8))
+        self._apply_scale_frame = tk.Frame(parent, bg=CARD_BG, padx=12, pady=8)
+        # DO NOT pack - scaling is always mandatory, checkbox should never be visible
 
         self._apply_scale_checkbox = tk.Checkbutton(
-            apply_frame,
+            self._apply_scale_frame,
             text="✓ Scale images to match (recommended - reduces file size)",
             variable=self._apply_scale_var,
             bg=CARD_BG,
@@ -572,7 +623,7 @@ Click Next when the scale looks right."""
         self._apply_scale_checkbox.pack(side="left")
 
         tk.Label(
-            apply_frame,
+            self._apply_scale_frame,
             text="(LANCZOS resampling)",
             bg=CARD_BG,
             fg=TEXT_SECONDARY,
@@ -581,7 +632,18 @@ Click Next when the scale looks right."""
 
     def on_enter(self) -> None:
         """Load references and user image when step becomes active."""
-        # Load reference sprites
+        # Handle add-to-existing mode differently
+        if self.state.is_adding_to_existing:
+            self._setup_add_to_existing_mode()
+            return
+
+        # Normal mode: hide add-to-existing selector, show reference selector
+        self._new_expr_selector_frame.pack_forget()
+        self._ref_selector_frame.pack(pady=(0, 8))
+        # Scaling is always mandatory - ensure var is True
+        self._apply_scale_var.set(True)
+        self._left_label.configure(text="Reference")
+
         self._load_references()
 
         if not self._references:
@@ -613,9 +675,9 @@ Click Next when the scale looks right."""
         if self.state.scale_factor:
             self._scale_var.set(self.state.scale_factor)
 
-        # Restore apply scale checkbox
-        if self._apply_scale_var:
-            self._apply_scale_var.set(self.state.apply_scale_to_images)
+        # Scaling is always mandatory - always force True
+        # (checkbox is hidden but backend var must be True)
+        self._apply_scale_var.set(True)
 
         # Update canvas sizes based on screen (larger for better accuracy)
         parent = self._ref_canvas.winfo_toplevel()
@@ -629,6 +691,206 @@ Click Next when the scale looks right."""
 
         # Initial draw
         self._redraw()
+
+    def should_skip(self) -> bool:
+        """Skip scale step if only extending existing outfits (no new outfits)."""
+        if not self.state.is_adding_to_existing:
+            return False
+        # If there are new outfits, we need the scale step
+        has_new_outfits = bool(self.state.generated_outfit_keys)
+        if has_new_outfits:
+            return False
+        # Only extending existing outfits - those expressions are generated from
+        # already-scaled images, so they're already at the right size
+        return True
+
+    def _setup_add_to_existing_mode(self) -> None:
+        """Set up ScaleStep for add-to-existing mode.
+
+        Left side: existing character expression at its YAML scale.
+        Right side: newly generated expression with dropdown selector.
+        Auto-calc: existing_h / new_h
+        """
+        # Hide normal reference selector, show new expression selector
+        self._ref_selector_frame.pack_forget()
+        self._new_expr_selector_frame.pack(pady=(0, 8))
+
+        # Scaling is always mandatory
+        self._apply_scale_var.set(True)
+
+        # Update left label
+        self._left_label.configure(text="Existing Character")
+
+        # === LEFT SIDE: Load existing character reference as composite ===
+        char_folder = self.state.existing_character_folder
+        sprite_creator_poses = self.state.sprite_creator_poses or []
+
+        self._existing_ref_img = None
+
+        # Build composite (outfit + face) for a complete character preview.
+        # Face-only or outfit-only images are mostly transparent and look blank.
+        all_poses = sorted(sprite_creator_poses) if sprite_creator_poses else []
+        if not all_poses and char_folder:
+            all_poses = sorted(
+                p.name for p in char_folder.iterdir()
+                if p.is_dir() and len(p.name) == 1 and p.name.isalpha()
+            )
+
+        for pose_letter in all_poses:
+            pose_dir = char_folder / pose_letter
+            outfit_path = None
+            face_path = None
+
+            # Find first outfit image
+            outfits_dir = pose_dir / "outfits"
+            if outfits_dir.is_dir():
+                for f in sorted(outfits_dir.iterdir()):
+                    if f.suffix.lower() in [".png", ".webp"]:
+                        outfit_path = f
+                        break
+
+            # Find first face image
+            face_dir = pose_dir / "faces" / "face"
+            if face_dir.is_dir():
+                for expr_num in ["0", "1"]:
+                    for ext in [".png", ".webp"]:
+                        p = face_dir / f"{expr_num}{ext}"
+                        if p.exists():
+                            face_path = p
+                            break
+                    if face_path:
+                        break
+
+            # Build composite if we have both
+            if outfit_path and face_path:
+                try:
+                    outfit = Image.open(outfit_path).convert("RGBA")
+                    face = Image.open(face_path).convert("RGBA")
+                    canvas = Image.new("RGBA", outfit.size, (0, 0, 0, 0))
+                    canvas.paste(outfit, (0, 0), outfit)
+                    canvas.paste(face, (0, 0), face)
+                    self._existing_ref_img = canvas
+                    break
+                except Exception:
+                    pass
+
+            # Fallback: face-only (Sprite Creator chars where face IS full character)
+            if not self._existing_ref_img and face_path:
+                try:
+                    self._existing_ref_img = Image.open(face_path).convert("RGBA")
+                    break
+                except Exception:
+                    pass
+
+            # Fallback: outfit-only
+            if not self._existing_ref_img and outfit_path:
+                try:
+                    self._existing_ref_img = Image.open(outfit_path).convert("RGBA")
+                    break
+                except Exception:
+                    pass
+
+        # Last resort: base.png from character root
+        if not self._existing_ref_img:
+            base_path = char_folder / "base.png"
+            if base_path.exists():
+                try:
+                    self._existing_ref_img = Image.open(base_path).convert("RGBA")
+                except Exception:
+                    pass
+
+        # Display at raw pixel size (scale=1.0). The engine applies character.yml
+        # scale uniformly to ALL poses later, so we don't pre-bake it here.
+        if self._existing_ref_img:
+            self._references["existing"] = {"image": self._existing_ref_img, "scale": 1.0}
+            self._ref_var.set("existing")
+
+        # === RIGHT SIDE: Load ONLY new outfit expressions (never existing outfit expressions) ===
+        self._new_expr_images.clear()
+        self._user_img = None
+
+        if self.state.expression_paths:
+            for outfit_name, expr_dict in self.state.expression_paths.items():
+                # ONLY new outfits - never load existing outfit expressions for scaling
+                if outfit_name.startswith("existing_"):
+                    continue
+                for expr_key in sorted(expr_dict.keys(), key=lambda x: int(x) if x.isdigit() else 999):
+                    path = expr_dict[expr_key]
+                    if path and path.exists():
+                        try:
+                            img = Image.open(path).convert("RGBA")
+                            label = f"{outfit_name} - {expr_key}"
+                            self._new_expr_images[label] = img
+                        except Exception:
+                            pass
+
+        # Populate dropdown and set default
+        menu = self._new_expr_menu["menu"]
+        menu.delete(0, "end")
+        if self._new_expr_images:
+            labels = list(self._new_expr_images.keys())
+            # Default to first expression (usually 0.png)
+            default_label = labels[0]
+            self._new_expr_var.set(default_label)
+            self._user_img = self._new_expr_images[default_label]
+
+            for label in labels:
+                menu.add_command(
+                    label=label,
+                    command=lambda l=label: self._on_new_expr_change(l)
+                )
+
+        # Fallback: scan working folder for any generated face
+        if not self._user_img:
+            working_folder = self.state.character_folder
+            if working_folder and working_folder.exists():
+                for pose_letter in "abcdefghijklmnopqrstuvwxyz":
+                    face_dir = working_folder / pose_letter / "faces" / "face"
+                    if face_dir.is_dir():
+                        for expr_num in ["0", "1"]:
+                            for ext in [".png", ".webp"]:
+                                path = face_dir / f"{expr_num}{ext}"
+                                if path.exists():
+                                    try:
+                                        self._user_img = Image.open(path).convert("RGBA")
+                                        break
+                                    except Exception:
+                                        pass
+                            if self._user_img:
+                                break
+                        if self._user_img:
+                            break
+
+        # === AUTO-CALC: existing_h / new_h ===
+        # Match pixel heights only; the engine applies existing_scale uniformly
+        # to ALL poses (including ours), so we must NOT pre-bake it here.
+        if self._existing_ref_img and self._user_img:
+            existing_h = self._existing_ref_img.height
+            new_h = self._user_img.height
+            initial_scale = existing_h / new_h
+            self._scale_var.set(min(max(initial_scale, 0.1), 2.5))
+        else:
+            self._scale_var.set(1.0)
+
+        # Update canvas sizes
+        parent = self._ref_canvas.winfo_toplevel()
+        sw = parent.winfo_screenwidth()
+        sh = parent.winfo_screenheight()
+        self._canv_w = max(int((sw - 100) // 2.2), 350)
+        self._canv_h = max(int(sh * 0.55), 350)
+
+        self._ref_canvas.configure(width=self._canv_w, height=self._canv_h)
+        self._user_canvas.configure(width=self._canv_w, height=self._canv_h)
+
+        # Initial draw
+        self._redraw()
+
+    def _on_new_expr_change(self, label: str) -> None:
+        """Handle new expression selector change in add-to-existing mode."""
+        self._new_expr_var.set(label)
+        if label in self._new_expr_images:
+            self._user_img = self._new_expr_images[label]
+            self._redraw()
 
     def _load_references(self) -> None:
         """Load reference sprites from scale_references subdirectory.
@@ -764,13 +1026,14 @@ Click Next when the scale looks right."""
 
 class SummaryStep(WizardStep):
     """
-    Step 13: Final Summary.
+    Step 10: Final Summary.
 
     Shows completion status and output location.
     """
 
     STEP_ID = "summary"
     STEP_TITLE = "Complete"
+    STEP_NUMBER = 10
     STEP_HELP = """Character Complete!
 
 Your character has been created and all files are saved.
@@ -856,11 +1119,59 @@ Click Finish to close the wizard."""
         self._actions_frame = tk.Frame(right_col, bg=CARD_BG, padx=24, pady=16)
         self._actions_frame.pack(fill="x")
 
+    def on_leave(self) -> None:
+        """Reset finalized flag when navigating back so re-entry re-finalizes."""
+        self._finalized = False
+
     def on_enter(self) -> None:
         """Populate summary when step becomes active and finalize character."""
-        # Perform finalization on entering this step
-        self._finalize_character()
+        # If already finalized (user went back and came forward), just show summary
+        if self._finalized:
+            self._populate_summary()
+            return
 
+        # Show loading and disable nav buttons during finalization
+        self.show_loading("Finalizing character...")
+        self.wizard._back_btn.configure(state="disabled")
+        self.wizard._next_btn.configure(state="disabled")
+
+        def do_finalize():
+            try:
+                self._finalize_character()
+                self.wizard.root.after(0, self._on_finalization_complete)
+            except Exception as e:
+                msg = str(e)
+                self.wizard.root.after(0, lambda m=msg: self._on_finalization_error(m))
+
+        import threading
+        threading.Thread(target=do_finalize, daemon=True).start()
+
+    def _update_progress(self, message: str) -> None:
+        """Thread-safe progress update during finalization."""
+        self.wizard.root.after(0, lambda: self.show_loading(message))
+
+    def _on_finalization_complete(self) -> None:
+        """Handle finalization completion on the main thread."""
+        self.hide_loading()
+        self.wizard._back_btn.configure(state="normal")
+        self.wizard._next_btn.configure(state="normal")
+        self._populate_summary()
+
+    def _on_finalization_error(self, error_msg: str) -> None:
+        """Handle finalization error on the main thread."""
+        self.hide_loading()
+        self.wizard._back_btn.configure(state="normal")
+        self.wizard._next_btn.configure(state="normal")
+        log_error(f"FINALIZE: Error during finalization: {error_msg}")
+        show_error_dialog(
+            self.wizard.root,
+            "Finalization Error",
+            f"An error occurred during finalization:\n\n{error_msg}\n\n"
+            f"Your generated files are still in the character folder."
+        )
+
+    def _populate_summary(self) -> None:
+        """Build the summary UI with character info and action buttons."""
         # Clear existing summary content
         for widget in self._summary_frame.winfo_children():
             widget.destroy()
@@ -870,37 +1181,70 @@ Click Finish to close the wizard."""
             widget.destroy()
 
         # === LEFT COLUMN: Summary Info ===
-        tk.Label(
-            self._summary_frame,
-            text="Character Summary",
-            bg=CARD_BG,
-            fg=TEXT_COLOR,
-            font=SECTION_FONT,
-        ).pack(anchor="w", pady=(0, 12))
+        if self.state.is_adding_to_existing:
+            tk.Label(
+                self._summary_frame,
+                text="Content Added Summary",
+                bg=CARD_BG,
+                fg=TEXT_COLOR,
+                font=SECTION_FONT,
+            ).pack(anchor="w", pady=(0, 12))
 
-        # Character info
-        self._add_row("Character Name:", self.state.display_name)
-        self._add_row("Voice:", self.state.voice.capitalize())
-        self._add_row("Archetype:", self.state.archetype_label)
+            # Character info
+            self._add_row("Character:", self.state.display_name)
 
-        # Generation stats - use generated_outfit_keys for accurate count
-        # (includes only outfits that succeeded, already includes base if applicable)
-        outfit_count = len(self.state.generated_outfit_keys) if self.state.generated_outfit_keys else 0
-        expr_count = len(self.state.expressions_sequence)
-        self._add_row("Outfits Generated:", str(outfit_count))
-        self._add_row("Expressions per Outfit:", str(expr_count))
+            # New outfits added
+            new_outfit_count = len(self.state.generated_outfit_keys) if self.state.generated_outfit_keys else 0
+            if new_outfit_count > 0:
+                self._add_row("New Outfits Added:", str(new_outfit_count))
 
-        # Scale info
-        if self.state.scale_factor:
-            self._add_row("Scale:", f"{self.state.scale_factor:.2f}")
+            # Existing outfits extended
+            if self.state.existing_outfits_to_extend:
+                extended_count = len(self.state.existing_outfits_to_extend)
+                total_expr = sum(len(exprs) for exprs in self.state.existing_outfits_to_extend.values())
+                self._add_row("Outfits Extended:", str(extended_count))
+                self._add_row("New Expressions Added:", str(total_expr))
 
-        # Name/Hair color with swatch
-        if self.state.name_color:
-            self._add_color_row("Name Color:", self.state.name_color)
+            # Scale info (if applied)
+            if self.state.scale_factor and self.state.scale_factor != 1.0:
+                self._add_row("Scale Applied:", f"{self.state.scale_factor:.2f}")
 
-        # Output location
-        if self.state.character_folder:
-            self._add_row("Output Folder:", str(self.state.character_folder))
+            # Output location
+            if self.state.character_folder:
+                self._add_row("Character Folder:", str(self.state.character_folder))
+        else:
+            # Normal mode summary
+            tk.Label(
+                self._summary_frame,
+                text="Character Summary",
+                bg=CARD_BG,
+                fg=TEXT_COLOR,
+                font=SECTION_FONT,
+            ).pack(anchor="w", pady=(0, 12))
+
+            # Character info
+            self._add_row("Character Name:", self.state.display_name)
+            self._add_row("Voice:", self.state.voice.capitalize())
+            self._add_row("Archetype:", self.state.archetype_label)
+
+            # Generation stats - use generated_outfit_keys for accurate count
+            # (includes only outfits that succeeded, already includes base if applicable)
+            outfit_count = len(self.state.generated_outfit_keys) if self.state.generated_outfit_keys else 0
+            expr_count = len(self.state.expressions_sequence)
+            self._add_row("Outfits Generated:", str(outfit_count))
+            self._add_row("Expressions per Outfit:", str(expr_count))
+
+            # Scale info
+            if self.state.scale_factor:
+                self._add_row("Scale:", f"{self.state.scale_factor:.2f}")
+
+            # Name/Hair color with swatch
+            if self.state.name_color:
+                self._add_color_row("Name Color:", self.state.name_color)
+
+            # Output location
+            if self.state.character_folder:
+                self._add_row("Output Folder:", str(self.state.character_folder))
 
         # Final message
         tk.Label(
@@ -934,7 +1278,7 @@ Click Finish to close the wizard."""
             "Open Output Folder",
             self._open_output_folder,
             width=20,
-        ).pack(pady=(0, 16))
+        ).pack(pady=(0, 12))
 
         # Finish button - opens folder and closes app
         create_primary_button(
@@ -1017,12 +1361,13 @@ Click Finish to close the wizard."""
             show_error_dialog(self.parent, "Error", f"Failed to launch sprite tester:\n{e}")
 
     def _open_output_folder(self) -> None:
-        """Open the character output folder in the file explorer."""
+        """Open the enclosing folder (parent of character folder) in file explorer."""
         if not self.state.character_folder:
             messagebox.showerror("Error", "No character folder available.")
             return
 
-        folder_path = self.state.character_folder
+        # Open the parent folder so user can see the character folder from outside
+        folder_path = self.state.character_folder.parent
         if not folder_path.exists():
             show_error_dialog(self.parent, "Error", f"Folder not found:\n{folder_path}")
             return
@@ -1031,8 +1376,12 @@ Click Finish to close the wizard."""
             import subprocess
             import platform
 
+            print(f"[DEBUG] Opening folder: {folder_path}")
+
             if platform.system() == "Windows":
-                os.startfile(str(folder_path))
+                # Use explorer.exe explicitly instead of os.startfile() to avoid
+                # unexpected behavior with file associations
+                subprocess.Popen(["explorer", str(folder_path)])
             elif platform.system() == "Darwin":  # macOS
                 subprocess.run(["open", str(folder_path)], check=False)
             else:  # Linux
@@ -1135,19 +1484,27 @@ Click Finish to close the wizard."""
         """Finalize character: create character.yml and expression sheets."""
         from ...processing.pose_processor import flatten_pose_outfits_to_letter_poses, write_character_yml
         from ...processing import generate_expression_sheets_for_root
+        import shutil
 
         # Skip if already finalized (user went back and came forward again)
         if self._finalized:
             log_info("Skipping finalization - already completed")
             return
 
+        # Handle add-to-existing mode differently
+        if self.state.is_adding_to_existing:
+            self._finalize_add_to_existing()
+            return
+
         if not self.state.character_folder:
             return
 
         char_dir = self.state.character_folder
+        log_info(f"FINALIZE: mode=new, folder={char_dir}")
 
         try:
             # Flatten pose/outfit combinations into letter poses
+            self._update_progress("Organizing pose structure...")
             print("[INFO] Flattening pose/outfit combinations into letter poses...")
             final_pose_letters = flatten_pose_outfits_to_letter_poses(char_dir)
             if not final_pose_letters:
@@ -1160,11 +1517,32 @@ Click Finish to close the wizard."""
                     ]
                 )
 
+            # Backup full-size 0.png for each pose BEFORE scaling
+            # Stored externally so character folder stays clean for ST
+            self._update_progress("Creating full-size backups...")
+            original_size = None
+            backup_id = generate_backup_id()
+            self.state.backup_id = backup_id
+            self._create_backups(char_dir, final_pose_letters, backup_id)
+
+            # Capture original image size for reference
+            for letter in final_pose_letters:
+                face_path = char_dir / letter / "faces" / "face" / "0.png"
+                if face_path.exists():
+                    try:
+                        img = Image.open(face_path)
+                        original_size = list(img.size)
+                        img.close()
+                        break
+                    except Exception:
+                        pass
+
             # Apply scale to images if enabled (only scale DOWN, not up)
             final_scale = self.state.scale_factor or 1.0
             log_info(f"Scale check: apply_scale_to_images={self.state.apply_scale_to_images}, scale_factor={final_scale}")
 
             if self.state.apply_scale_to_images and final_scale < 1.0:
+                self._update_progress("Scaling images...")
                 log_info(f"Applying scale {final_scale} to all images (LANCZOS resampling)...")
                 print(f"[INFO] Applying scale {final_scale} to all images (LANCZOS resampling)...")
                 scaled_count = self._apply_scale_to_images(char_dir, final_pose_letters, final_scale)
@@ -1182,6 +1560,8 @@ Click Finish to close the wizard."""
             poses_yaml = {letter: {"facing": "right"} for letter in final_pose_letters}
 
             # Write character.yml with values from wizard state
+            self._update_progress("Writing character data...")
+            # Include archetype and sprite_creator_poses for future add-to-character functionality
             yml_path = char_dir / "character.yml"
             write_character_yml(
                 yml_path,
@@ -1192,21 +1572,339 @@ Click Finish to close the wizard."""
                 final_scale,
                 poses_yaml,
                 game=None,
+                archetype=self.state.archetype_label or None,
+                sprite_creator_poses=final_pose_letters,
+                original_size=original_size,
+                backup_id=backup_id,
             )
             print(f"[INFO] Created character.yml for {self.state.display_name}")
 
+            # Save base.png (the cropped character image) for future reference
+            if self.state.base_pose_path and self.state.base_pose_path.exists():
+                base_dest = char_dir / "base.png"
+                if not base_dest.exists():
+                    shutil.copy2(self.state.base_pose_path, base_dest)
+                    # Scale base.png to match other images if scaling was applied
+                    if self.state.apply_scale_to_images and (self.state.scale_factor or 1.0) < 1.0:
+                        self._scale_image_file(base_dest, self.state.scale_factor)
+                    print(f"[INFO] Saved base.png to {base_dest}")
+
             # Generate expression sheets (will use scaled images if scaling was applied)
+            self._update_progress("Generating expression sheets...")
             generate_expression_sheets_for_root(char_dir)
             print(f"[INFO] Generated expression sheets for {self.state.display_name}")
 
             # Mark as finalized so we don't re-run if user goes back and forward
             self._finalized = True
-            log_info("Finalization completed successfully")
+            log_info(f"FINALIZE: Complete at {char_dir}")
 
         except Exception as e:
+            log_error(f"FINALIZE: Error: {e}")
             print(f"[ERROR] Finalization error: {e}")
             import traceback
             traceback.print_exc()
+            raise  # Let the threaded caller handle UI notification
+
+    def _finalize_add_to_existing(self) -> None:
+        """Finalize for add-to-existing mode: merge new content with existing character."""
+        from ...processing.pose_processor import flatten_pose_outfits_to_letter_poses
+        from ...processing import generate_expression_sheets_for_root
+        import shutil
+
+        existing_folder = self.state.existing_character_folder
+        working_folder = self.state.character_folder
+
+        if not existing_folder or not working_folder:
+            log_error("Add-to-existing", "Missing folder paths")
+            return
+
+        # SAFETY: Verify we're not about to corrupt the existing folder
+        if working_folder == existing_folder:
+            log_error("Add-to-existing", "CRITICAL: working_folder == existing_folder! This would corrupt data.")
+            print("[ERROR] Cannot finalize: working folder same as existing folder. Aborting.")
+            return
+
+        # Log folder paths for debugging
+        log_info(f"FINALIZE: mode=add_existing, folder={existing_folder}")
+        log_info(f"FINALIZE: working_folder={working_folder}")
+
+        try:
+            new_pose_letters = []
+
+            # 1. Process NEW outfits (if any)
+            has_new_outfits = (
+                self.state.generated_outfit_keys
+                and len(self.state.generated_outfit_keys) > 0
+            )
+
+            if has_new_outfits:
+                self._update_progress("Organizing new outfits...")
+                print("[INFO] Flattening new outfits...")
+                # Flatten new outfits in working folder, starting from next available letter
+                new_pose_letters = flatten_pose_outfits_to_letter_poses(
+                    working_folder,
+                    starting_letter=self.state.next_pose_letter
+                )
+                log_info(f"Created new poses: {new_pose_letters}")
+
+                # Backup full-size 0.png BEFORE scaling (stored externally)
+                self._update_progress("Creating full-size backups...")
+                # Use existing backup_id or generate a new one
+                backup_id = self.state.backup_id
+                if not backup_id:
+                    backup_id = self.state.existing_character_data.get('backup_id')
+                if not backup_id:
+                    backup_id = generate_backup_id()
+                self.state.backup_id = backup_id
+                self._create_backups(working_folder, new_pose_letters, backup_id)
+
+                # Apply scale to new poses (always applied in add-to-existing mode)
+                scale_factor = self.state.scale_factor or 1.0
+                if scale_factor != 1.0:
+                    self._update_progress("Scaling images...")
+                    log_info(f"Applying scale {scale_factor} to new poses...")
+                    self._apply_scale_to_images(working_folder, new_pose_letters, scale_factor)
+
+                # Dimension safety net: compare new vs existing image sizes
+                self._validate_dimensions(working_folder, new_pose_letters, existing_folder, scale_factor)
+
+                # Copy new poses to existing character folder
+                self._update_progress("Copying new outfits to character...")
+                for pose_letter in new_pose_letters:
+                    src_pose = working_folder / pose_letter
+                    dest_pose = existing_folder / pose_letter
+                    if src_pose.exists():
+                        if dest_pose.exists():
+                            shutil.rmtree(dest_pose)
+                        shutil.copytree(src_pose, dest_pose)
+                        log_info(f"Copied pose {pose_letter} to existing character")
+
+                # Migrate legacy _backups from inside existing character folder to external storage
+                legacy_backups = existing_folder / "_backups"
+                if legacy_backups.exists():
+                    log_info(f"Migrating legacy _backups to external storage...")
+                    ext_dir = get_backup_dir(backup_id)
+                    for item in legacy_backups.iterdir():
+                        dest_item = ext_dir / item.name
+                        if item.is_dir():
+                            if not dest_item.exists():
+                                shutil.copytree(item, dest_item)
+                        else:
+                            if not dest_item.exists():
+                                dest_item.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(item, dest_item)
+                    shutil.rmtree(legacy_backups)
+                    log_info(f"Migrated legacy backups and removed _backups folder")
+
+            # 2. Scale expressions for EXISTING outfits (they're already in place)
+            if self.state.existing_outfits_to_extend:
+                scale_factor = self.state.scale_factor or 1.0
+                if scale_factor != 1.0:
+                    for pose_letter, expr_keys in self.state.existing_outfits_to_extend.items():
+                        faces_dir = existing_folder / pose_letter / "faces" / "face"
+                        for expr_key in expr_keys:
+                            for ext in [".png", ".webp"]:
+                                expr_path = faces_dir / f"{expr_key}{ext}"
+                                if expr_path.exists():
+                                    self._scale_image_file(expr_path, scale_factor)
+                                    break
+
+            # 3. Save base.png to existing folder (if not already exists)
+            if self.state.base_pose_path and self.state.base_pose_path.exists():
+                base_dest = existing_folder / "base.png"
+                if not base_dest.exists():
+                    shutil.copy2(self.state.base_pose_path, base_dest)
+                    scale_factor = self.state.scale_factor or 1.0
+                    if scale_factor != 1.0:
+                        self._scale_image_file(base_dest, scale_factor)
+                    log_info(f"Saved base.png to {base_dest}")
+
+            # 4. Update character.yml (merge, preserving existing values)
+            self._update_progress("Writing character data...")
+            self._merge_character_yml(existing_folder, new_pose_letters)
+
+            # 5. Regenerate expression sheets for ALL affected poses
+            # (existing poses that got new expressions + new poses)
+            affected_poses = list(self.state.existing_outfits_to_extend.keys()) + new_pose_letters
+            if affected_poses:
+                self._update_progress("Generating expression sheets...")
+                log_info(f"Regenerating expression sheets for poses: {affected_poses}")
+                # Generate for the whole character (will cover all poses)
+                generate_expression_sheets_for_root(existing_folder)
+
+            # Update state to point to existing folder for summary display
+            self.state.character_folder = existing_folder
+
+            # Clean up temp working folder (it's no longer needed after merge)
+            if working_folder != existing_folder and working_folder.exists():
+                try:
+                    shutil.rmtree(working_folder)
+                    log_info(f"Cleaned up temp folder: {working_folder}")
+                except Exception as cleanup_e:
+                    log_error("Cleanup temp folder", str(cleanup_e))
+
+            self._finalized = True
+            log_info(f"FINALIZE: Complete at {existing_folder}")
+
+        except Exception as e:
+            log_error(f"FINALIZE: Error in add-to-existing: {e}")
+            print(f"[ERROR] Add-to-existing finalization error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise  # Let the threaded caller handle UI notification
+
+    def _create_backups(self, char_dir: Path, pose_letters: list, backup_id: str) -> None:
+        """Backup full-size 0.png for each pose before scaling.
+
+        Stores backups externally at ~/.sprite_creator/backups/<backup_id>/
+        to keep character folders clean for ST game compatibility.
+        """
+        import shutil
+
+        backups_dir = get_backup_dir(backup_id)
+        backed_up = 0
+
+        for letter in pose_letters:
+            src = char_dir / letter / "faces" / "face" / "0.png"
+            if not src.exists():
+                src = char_dir / letter / "faces" / "face" / "0.webp"
+            if src.exists():
+                dest = backups_dir / letter / "faces" / "face" / src.name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.copy2(src, dest)
+                    backed_up += 1
+                except Exception as e:
+                    log_error("Backup", f"Failed to backup {src}: {e}")
+
+        if backed_up > 0:
+            log_info(f"Backed up {backed_up} full-size outfit images to {backups_dir}")
+            print(f"[INFO] Backed up {backed_up} full-size outfit images")
+
+    def _validate_dimensions(self, working_folder: Path, new_pose_letters: list, existing_folder: Path, scale_factor: float) -> None:
+        """Validate that new images match existing character dimensions after scaling."""
+        # Find first new image height
+        new_h = None
+        for pose_letter in new_pose_letters:
+            face_dir = working_folder / pose_letter / "faces" / "face"
+            if face_dir.is_dir():
+                for ext in [".png", ".webp"]:
+                    path = face_dir / f"0{ext}"
+                    if path.exists():
+                        try:
+                            img = Image.open(path)
+                            new_h = img.height
+                            img.close()
+                            break
+                        except Exception:
+                            pass
+                if new_h:
+                    break
+
+        # Find first existing image height
+        existing_h = None
+        for pose_letter in "abcdefghijklmnopqrstuvwxyz":
+            face_dir = existing_folder / pose_letter / "faces" / "face"
+            if face_dir.is_dir():
+                for ext in [".png", ".webp"]:
+                    path = face_dir / f"0{ext}"
+                    if path.exists():
+                        try:
+                            img = Image.open(path)
+                            existing_h = img.height
+                            img.close()
+                            break
+                        except Exception:
+                            pass
+                if existing_h:
+                    break
+
+        if new_h and existing_h:
+            ratio = new_h / existing_h
+            if abs(ratio - 1.0) > 0.05:
+                log_info(f"DIMENSION WARNING: new_h={new_h}, existing_h={existing_h}, "
+                         f"ratio={ratio:.3f}, scale_factor={scale_factor}")
+                print(f"[WARN] New image height ({new_h}px) differs from existing ({existing_h}px) "
+                      f"by {abs(ratio - 1.0)*100:.1f}%")
+
+    def _merge_character_yml(self, char_dir: Path, new_pose_letters: list) -> None:
+        """Update character.yml, preserving ALL existing data."""
+        yml_path = char_dir / "character.yml"
+
+        # Load existing data
+        data = {}
+        if yml_path.exists():
+            try:
+                with yml_path.open("r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+            except Exception as e:
+                log_error("Merge character.yml", f"Failed to read existing: {e}")
+
+        # Add new poses (if any)
+        if 'poses' not in data:
+            data['poses'] = {}
+        for letter in new_pose_letters:
+            data['poses'][letter] = {'facing': 'right'}
+
+        # Add archetype if not present (for characters not originally made by this app)
+        if 'archetype' not in data and self.state.archetype_label:
+            data['archetype'] = self.state.archetype_label
+
+        # Add new poses to sprite_creator_poses list
+        # This tracks which poses were created by Sprite Creator (can add expressions to these)
+        existing_sc_poses = data.get('sprite_creator_poses', [])
+        if not isinstance(existing_sc_poses, list):
+            existing_sc_poses = []
+        # Add new poses that aren't already in the list
+        for letter in new_pose_letters:
+            if letter not in existing_sc_poses:
+                existing_sc_poses.append(letter)
+        data['sprite_creator_poses'] = sorted(existing_sc_poses)
+
+        # Add backup_id for external backup storage
+        if self.state.backup_id and 'backup_id' not in data:
+            data['backup_id'] = self.state.backup_id
+
+        # PRESERVE: All existing values (voice, eye_line, name_color, scale, display_name, archetype)
+        # These are NOT overwritten with user selections
+
+        # Write back
+        try:
+            with yml_path.open("w", encoding="utf-8") as f:
+                yaml.dump(data, f, sort_keys=False, allow_unicode=True)
+            log_info(f"Updated character.yml with {len(new_pose_letters)} new poses")
+        except Exception as e:
+            log_error("Merge character.yml", f"Failed to write: {e}")
+
+    def _add_sprite_creator_poses(self, yml_path: Path, pose_letters: list) -> None:
+        """Add pose letters to sprite_creator_poses list in character.yml.
+
+        This tracks which poses were created by Sprite Creator, allowing
+        expressions to be added to them later (unlike standard ST poses).
+        """
+        try:
+            data = {}
+            if yml_path.exists():
+                with yml_path.open("r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+
+            # Get existing list or create new one
+            existing_poses = data.get('sprite_creator_poses', [])
+            if not isinstance(existing_poses, list):
+                existing_poses = []
+
+            # Add new poses that aren't already in the list
+            for letter in pose_letters:
+                if letter not in existing_poses:
+                    existing_poses.append(letter)
+
+            data['sprite_creator_poses'] = sorted(existing_poses)
+
+            with yml_path.open("w", encoding="utf-8") as f:
+                yaml.dump(data, f, sort_keys=False, allow_unicode=True)
+            log_info(f"Added poses to sprite_creator_poses: {pose_letters}")
+        except Exception as e:
+            log_error("Add sprite_creator poses", str(e))
 
     def validate(self) -> bool:
         """Always valid - just a summary screen."""
