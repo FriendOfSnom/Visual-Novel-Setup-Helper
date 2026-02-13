@@ -68,7 +68,7 @@ If you have a GEMINI_API_KEY environment variable set, it takes precedence over 
 The key may have been deleted or restricted. Generate a new one from Google Cloud Console.
 
 "Quota exceeded" or "429" errors:
-You've hit rate limits. Wait a few minutes, or if using AI Studio free tier, switch to Google Cloud as described above.
+This almost always means you're using an AI Studio free-tier key instead of a Google Cloud key. The free tier has zero or very low quota for image generation. Set up Google Cloud billing as described above to get $300 in free credits.
 
 "Safety filter" errors:
 The AI refused to generate certain content. Try different prompts or descriptions.
@@ -80,7 +80,7 @@ API Key Security:
 Your key is stored locally (~/.st_gemini_config.json) and only used to communicate with Google. Never shared.
 
 When Credits Run Low:
-Create a new Google account to get fresh $300 credits."""
+Google Cloud's $300 free trial lasts about 90 days. After it runs out, you can create a new Google account to get fresh credits. The same API key setup process applies."""
 
 
 class APISetupWindow:

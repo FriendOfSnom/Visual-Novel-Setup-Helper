@@ -2380,12 +2380,19 @@ Click Next when your character looks right."""
         self._is_normalizing_add_existing = False
         self._hide_normalize_loading()
 
-        # Show error on the right canvas
+        # Show a popup for quota/billing errors so the user clearly sees it
+        if "quota" in error.lower() or "free_tier" in error.lower() or "billing" in error.lower():
+            messagebox.showerror("API Quota Exceeded", error)
+        else:
+            messagebox.showerror("Normalization Failed", f"Failed to normalize image:\n\n{error[:200]}")
+
+        # Also show brief error on the canvas
         if self._normalized_preview_canvas:
             self._normalized_preview_canvas.delete("all")
+            brief = error.split("\n")[0][:60]
             self._normalized_preview_canvas.create_text(
                 110, 170,
-                text=f"Error:\n{error[:80]}",
+                text=f"{brief}\n\nClick Normalize to retry.",
                 fill="#ff6666",
                 font=SMALL_FONT,
                 width=200,

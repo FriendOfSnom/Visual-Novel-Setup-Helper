@@ -563,6 +563,23 @@ def _call_gemini_with_parts(
                     last_error = f"Gemini API error {response.status_code}: {response.text}"
                     continue
                 log_api_call(context, False, f"HTTP {response.status_code}: {response.text[:200]}")
+                # Provide a user-friendly message for quota/billing errors
+                if response.status_code == 429:
+                    resp_text = response.text.lower()
+                    if "free_tier" in resp_text or "quota" in resp_text:
+                        raise GeminiAPIError(
+                            "API quota exceeded.\n\n"
+                            "This usually means you're using a free-tier API key.\n"
+                            "You need a Google Cloud API key with billing enabled.\n\n"
+                            "New Google Cloud accounts get $300 in free credits.\n"
+                            "Check API Settings on the launcher to update your key."
+                        )
+                    else:
+                        raise GeminiAPIError(
+                            "Rate limited by Google API.\n\n"
+                            "Too many requests in a short period.\n"
+                            "Please wait a minute and try again."
+                        )
                 raise GeminiAPIError(f"Gemini API error {response.status_code}: {response.text}")
 
             data = response.json()

@@ -363,6 +363,19 @@ When satisfied with all outfits, click Next to proceed to expression generation.
             font=SMALL_FONT,
             wraplength=800,
             justify="left",
+        ).pack(fill="x", pady=(0, 4))
+
+        # Black background warning
+        tk.Label(
+            parent,
+            text="⚠️ Black areas are the BACKGROUND — it has not been removed yet! "
+                 "Use the Tolerance/Depth sliders and click Apply to remove it. "
+                 "If black background remains, your character will have a large black box around them in-game.",
+            bg=BG_COLOR,
+            fg="#FFD700",  # Bright yellow for visibility
+            font=SMALL_FONT,
+            wraplength=800,
+            justify="left",
         ).pack(fill="x", pady=(0, 8))
 
         # Scrollable canvas for outfit cards
