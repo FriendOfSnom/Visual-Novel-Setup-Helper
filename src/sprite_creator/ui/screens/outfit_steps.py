@@ -647,12 +647,14 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         self._card_frames.clear()
         self._card_overlays.clear()
 
-        # Get canvas dimensions for sizing - use larger images
-        # Full update() ensures geometry propagation is complete (not just idle tasks)
-        # so the canvas reports its actual allocated height, not a stale smaller value
+        # Size images based on WINDOW height (reliable — set by apply_window_size)
+        # instead of canvas height (unreliable — depends on multi-level canvas window
+        # chain propagation that doesn't fully resolve even after update()).
+        # Overhead: header ~50, footer ~60, step header elements ~130, content
+        # padding ~40, scrollbar ~20, card padding ~20 ≈ 320px total.
         self._canvas.winfo_toplevel().update()
-        canvas_h = self._canvas.winfo_height()
-        max_thumb_h = max(int(canvas_h * 0.85), 450)  # Increased from 0.70/300
+        win_h = self._canvas.winfo_toplevel().winfo_height()
+        max_thumb_h = max(win_h - 320, 350)
 
         # Get outfit names (only those that succeeded generation)
         outfit_names = self.state.generated_outfit_keys.copy() if self.state.generated_outfit_keys else []

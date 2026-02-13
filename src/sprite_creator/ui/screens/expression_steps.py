@@ -925,11 +925,12 @@ When adding expressions to existing outfits:
 
         expr_paths = self.state.expression_paths[outfit_name]
 
-        # Get canvas dimensions - use same sizing as outfit step
-        # Full update() ensures geometry propagation is complete
+        # Size images based on WINDOW height (reliable — set by apply_window_size)
+        # instead of canvas height (unreliable — depends on multi-level canvas window
+        # chain propagation that doesn't fully resolve even after update()).
         self._canvas.winfo_toplevel().update()
-        canvas_h = self._canvas.winfo_height()
-        max_thumb_h = max(int(canvas_h * 0.85), 450)  # Match outfit step sizing
+        win_h = self._canvas.winfo_toplevel().winfo_height()
+        max_thumb_h = max(win_h - 320, 350)
 
         # Build horizontal row of cards (like outfits)
         col = 0
