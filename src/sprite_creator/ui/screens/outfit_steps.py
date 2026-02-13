@@ -650,11 +650,18 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         # Size images based on WINDOW height (reliable — set by apply_window_size)
         # instead of canvas height (unreliable — depends on multi-level canvas window
         # chain propagation that doesn't fully resolve even after update()).
-        # Overhead: header ~50, footer ~60, step header elements ~130, content
-        # padding ~40, scrollbar ~20, card padding ~20 ≈ 320px total.
+        #
+        # The image must fit inside the card WITH controls, and the card must
+        # fit inside the visible area.  Overhead breakdown:
+        #   Wizard chrome:  header ~50 + footer ~45          =  95
+        #   Content padding: content_frame pady 20×2          =  40
+        #   Step header:     title ~45 + tip ~25 + warning ~40 = 110
+        #   Card chrome:     h-scrollbar ~20 + card pad ~15   =  35
+        #   Card controls:   caption + regen + sliders + btn  = 160
+        #                                              Total ≈ 440
         self._canvas.winfo_toplevel().update()
         win_h = self._canvas.winfo_toplevel().winfo_height()
-        max_thumb_h = max(win_h - 320, 350)
+        max_thumb_h = max(int((win_h - 440) * 0.75), 250)
 
         # Get outfit names (only those that succeeded generation)
         outfit_names = self.state.generated_outfit_keys.copy() if self.state.generated_outfit_keys else []
@@ -666,9 +673,14 @@ When satisfied with all outfits, click Next to proceed to expression generation.
             self._card_frames.append(card)
 
         # Tell the canvas how tall the cards actually are so the wizard-level
-        # scrollbar can detect overflow (cards include image + controls below)
+        # scrollbar can detect overflow (cards include image + controls below).
+        # Then explicitly notify the wizard — changing the canvas requested height
+        # updates _content_frame.winfo_reqheight() but doesn't trigger a <Configure>
+        # event (actual size is controlled by the canvas window item, not pack).
         self._inner_frame.update_idletasks()
         self._canvas.configure(height=self._inner_frame.winfo_reqheight())
+        if hasattr(self.wizard, '_on_content_configure'):
+            self.wizard._on_content_configure()
 
     def _build_single_outfit_card(self, idx: int, path: Path, name: str, max_h: int) -> tk.Frame:
         """Build a single outfit card with image and controls."""
@@ -839,9 +851,13 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         else:
             bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
 
-        # Composite
+        # Composite — constrain by height only; width can be whatever the
+        # aspect ratio needs since cards scroll horizontally.
         composite = Image.alpha_composite(bg, img)
-        composite.thumbnail((max_h, max_h), Image.LANCZOS)
+        if composite.height > max_h:
+            ratio = max_h / composite.height
+            new_w = int(composite.width * ratio)
+            composite = composite.resize((new_w, max_h), Image.LANCZOS)
 
         return ImageTk.PhotoImage(composite)
 

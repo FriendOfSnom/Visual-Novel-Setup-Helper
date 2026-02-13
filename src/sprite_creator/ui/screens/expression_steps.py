@@ -928,9 +928,17 @@ When adding expressions to existing outfits:
         # Size images based on WINDOW height (reliable — set by apply_window_size)
         # instead of canvas height (unreliable — depends on multi-level canvas window
         # chain propagation that doesn't fully resolve even after update()).
+        #
+        # Overhead breakdown (expression cards have fewer controls than outfits):
+        #   Wizard chrome:  header ~50 + footer ~45          =  95
+        #   Content padding: content_frame pady 20×2          =  40
+        #   Step header:     title ~45 + progress ~45 + tip ~35 = 125
+        #   Card chrome:     h-scrollbar ~20 + card pad ~15   =  35
+        #   Card controls:   caption + button row             =  70
+        #                                              Total ≈ 365
         self._canvas.winfo_toplevel().update()
         win_h = self._canvas.winfo_toplevel().winfo_height()
-        max_thumb_h = max(win_h - 320, 350)
+        max_thumb_h = max(int((win_h - 365) * 0.75), 250)
 
         # Build horizontal row of cards (like outfits)
         col = 0
@@ -973,9 +981,14 @@ When adding expressions to existing outfits:
             col += 1
 
         # Tell the canvas how tall the cards actually are so the wizard-level
-        # scrollbar can detect overflow (cards include image + controls below)
+        # scrollbar can detect overflow (cards include image + controls below).
+        # Then explicitly notify the wizard — changing the canvas requested height
+        # updates _content_frame.winfo_reqheight() but doesn't trigger a <Configure>
+        # event (actual size is controlled by the canvas window item, not pack).
         self._inner_frame.update_idletasks()
         self._canvas.configure(height=self._inner_frame.winfo_reqheight())
+        if hasattr(self.wizard, '_on_content_configure'):
+            self.wizard._on_content_configure()
 
     def _build_expression_card(self, outfit_name: str, expr_key: str, path: Path, max_h: int) -> tk.Frame:
         """Build a single expression card (matching outfit step style)."""
