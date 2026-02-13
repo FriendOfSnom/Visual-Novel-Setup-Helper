@@ -659,6 +659,11 @@ When satisfied with all outfits, click Next to proceed to expression generation.
             card.grid(row=0, column=idx, padx=10, pady=6)
             self._card_frames.append(card)
 
+        # Tell the canvas how tall the cards actually are so the wizard-level
+        # scrollbar can detect overflow (cards include image + controls below)
+        self._inner_frame.update_idletasks()
+        self._canvas.configure(height=self._inner_frame.winfo_reqheight())
+
     def _build_single_outfit_card(self, idx: int, path: Path, name: str, max_h: int) -> tk.Frame:
         """Build a single outfit card with image and controls."""
         card = tk.Frame(self._inner_frame, bg=CARD_BG, padx=6, pady=4)

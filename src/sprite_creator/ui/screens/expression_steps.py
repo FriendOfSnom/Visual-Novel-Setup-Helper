@@ -968,6 +968,11 @@ When adding expressions to existing outfits:
             self._expr_card_frames[(outfit_name, expr_key)] = card
             col += 1
 
+        # Tell the canvas how tall the cards actually are so the wizard-level
+        # scrollbar can detect overflow (cards include image + controls below)
+        self._inner_frame.update_idletasks()
+        self._canvas.configure(height=self._inner_frame.winfo_reqheight())
+
     def _build_expression_card(self, outfit_name: str, expr_key: str, path: Path, max_h: int) -> tk.Frame:
         """Build a single expression card (matching outfit step style)."""
         card = tk.Frame(self._inner_frame, bg=CARD_BG, padx=6, pady=4)
