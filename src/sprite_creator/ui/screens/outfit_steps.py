@@ -382,16 +382,18 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         canvas_frame = tk.Frame(parent, bg=BG_COLOR)
         canvas_frame.pack(fill="both", expand=True)
 
+        # Pack scrollbar FIRST so canvas gets proper remaining height
+        h_scroll = ttk.Scrollbar(canvas_frame, orient="horizontal")
+        h_scroll.pack(side="bottom", fill="x")
+
         self._canvas = tk.Canvas(
             canvas_frame,
             bg=BG_COLOR,
             highlightthickness=0,
+            xscrollcommand=h_scroll.set,
         )
-        self._canvas.pack(side="left", fill="both", expand=True)
-
-        h_scroll = ttk.Scrollbar(canvas_frame, orient="horizontal", command=self._canvas.xview)
-        h_scroll.pack(side="bottom", fill="x")
-        self._canvas.configure(xscrollcommand=h_scroll.set)
+        self._canvas.pack(fill="both", expand=True)
+        h_scroll.configure(command=self._canvas.xview)
 
         self._inner_frame = tk.Frame(self._canvas, bg=BG_COLOR)
         self._canvas.create_window((0, 0), window=self._inner_frame, anchor="nw")
@@ -646,7 +648,9 @@ When satisfied with all outfits, click Next to proceed to expression generation.
         self._card_overlays.clear()
 
         # Get canvas dimensions for sizing - use larger images
-        self._canvas.update_idletasks()
+        # Full update() ensures geometry propagation is complete (not just idle tasks)
+        # so the canvas reports its actual allocated height, not a stale smaller value
+        self._canvas.winfo_toplevel().update()
         canvas_h = self._canvas.winfo_height()
         max_thumb_h = max(int(canvas_h * 0.85), 450)  # Increased from 0.70/300
 

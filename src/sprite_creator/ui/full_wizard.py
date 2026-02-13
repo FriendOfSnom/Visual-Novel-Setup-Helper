@@ -296,8 +296,22 @@ class FullWizard:
     # --- Scrollable content area helpers ---
 
     def _on_content_configure(self, event=None) -> None:
-        """Update scroll region when content size changes, show/hide scrollbars."""
+        """Update scroll region and canvas window size when content changes.
+
+        Also updates the canvas window height so the wizard scrollbar detects
+        overflow when step content (e.g. outfit cards) is taller than the viewport.
+        """
         self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+        # Update canvas window to accommodate content that grew after initial layout
+        canvas_h = self._scroll_canvas.winfo_height()
+        content_h = self._content_frame.winfo_reqheight()
+        canvas_w = self._scroll_canvas.winfo_width()
+        content_w = self._content_frame.winfo_reqwidth()
+        self._scroll_canvas.itemconfigure(
+            self._canvas_window,
+            width=max(canvas_w, content_w),
+            height=max(canvas_h, content_h),
+        )
         self._update_scrollbars()
 
     def _on_canvas_configure(self, event=None) -> None:
