@@ -301,12 +301,21 @@ class FullWizard:
         self._update_scrollbars()
 
     def _on_canvas_configure(self, event=None) -> None:
-        """When the canvas resizes, stretch content to fill width and update bars."""
+        """When the canvas resizes, stretch content to fill both dimensions.
+
+        This is critical: without setting height, steps that use expand=True
+        (like the sprite selector grid) won't get proper vertical space because
+        the canvas window item only sizes to its content's requested height.
+        """
         canvas_w = self._scroll_canvas.winfo_width()
+        canvas_h = self._scroll_canvas.winfo_height()
         content_w = self._content_frame.winfo_reqwidth()
-        # Make content at least as wide as the canvas so it fills the space
+        content_h = self._content_frame.winfo_reqheight()
+        # Make content at least as large as the canvas so fill/expand works
         self._scroll_canvas.itemconfigure(
-            self._canvas_window, width=max(canvas_w, content_w)
+            self._canvas_window,
+            width=max(canvas_w, content_w),
+            height=max(canvas_h, content_h),
         )
         self._update_scrollbars()
 
