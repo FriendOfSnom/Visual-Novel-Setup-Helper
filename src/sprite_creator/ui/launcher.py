@@ -112,7 +112,7 @@ class ToolCard(tk.Frame):
         self._base_bg = CARD_BG
 
         # Padding frame
-        inner = tk.Frame(self, bg=CARD_BG, padx=20, pady=16)
+        inner = tk.Frame(self, bg=CARD_BG, padx=16, pady=10)
         inner.pack(fill="both", expand=True)
 
         # Icon/emoji area (optional)
@@ -122,9 +122,9 @@ class ToolCard(tk.Frame):
                 text=icon_text,
                 bg=CARD_BG,
                 fg=TEXT_COLOR,
-                font=(SECTION_FONT[0], 28),
+                font=(SECTION_FONT[0], 22),
             )
-            icon_label.pack(pady=(0, 8))
+            icon_label.pack(pady=(0, 4))
             icon_label.bind("<Button-1>", self._handle_click)
             icon_label.bind("<Enter>", self._on_enter)
             icon_label.bind("<Leave>", self._on_leave)
@@ -234,20 +234,39 @@ class LauncherWindow:
 
         # Apply dark theme and sizing
         apply_dark_theme(self.root)
-        apply_window_size(self.root, "standard")
+        apply_window_size(self.root, "large")
 
         self._build_ui()
         self._result: Optional[str] = None
 
     def _build_ui(self):
         """Build the launcher UI."""
-        # Main container
-        main_frame = tk.Frame(self.root, bg=BG_COLOR, padx=40, pady=30)
-        main_frame.pack(fill="both", expand=True)
+        # Scrollable container for small screens
+        self._scroll_canvas = tk.Canvas(self.root, bg=BG_COLOR, highlightthickness=0)
+        self._scroll_canvas.pack(side="left", fill="both", expand=True)
+
+        scrollbar = tk.Scrollbar(self.root, orient="vertical", command=self._scroll_canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+        self._scroll_canvas.configure(yscrollcommand=scrollbar.set)
+
+        main_frame = tk.Frame(self._scroll_canvas, bg=BG_COLOR, padx=40, pady=20)
+        self._scroll_canvas.create_window((0, 0), window=main_frame, anchor="nw")
+
+        def _on_configure(event=None):
+            self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+            # Match canvas width so content stays centered
+            canvas_w = self._scroll_canvas.winfo_width()
+            self._scroll_canvas.itemconfigure("all", width=canvas_w)
+        main_frame.bind("<Configure>", _on_configure)
+
+        # Mouse wheel scrolling
+        def _on_mousewheel(event):
+            self._scroll_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self._scroll_canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
         # Header with help button
         header_frame = tk.Frame(main_frame, bg=BG_COLOR)
-        header_frame.pack(fill="x", pady=(0, 10))
+        header_frame.pack(fill="x", pady=(0, 6))
 
         # Title area (left side)
         title_frame = tk.Frame(header_frame, bg=BG_COLOR)
@@ -283,7 +302,7 @@ class LauncherWindow:
             fg=TEXT_SECONDARY,
             font=BODY_FONT,
         )
-        subtitle_label.pack(pady=(0, 30))
+        subtitle_label.pack(pady=(0, 16))
 
         # Tool cards container (2x2 grid)
         cards_frame = tk.Frame(main_frame, bg=BG_COLOR)
@@ -336,7 +355,7 @@ class LauncherWindow:
 
         # Footer
         footer_frame = tk.Frame(main_frame, bg=BG_COLOR)
-        footer_frame.pack(fill="x", pady=(30, 0))
+        footer_frame.pack(fill="x", pady=(16, 0))
 
         footer_text = tk.Label(
             footer_frame,
@@ -387,24 +406,35 @@ class LauncherWindow:
         )
         clear_btn.pack(side="left")
 
+    def _unbind_scroll(self):
+        """Unbind scroll events before closing."""
+        try:
+            self._scroll_canvas.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
+
     def _select_sprite_creator(self):
         """Handle Character Sprite Creator selection."""
         self._result = "sprite_creator"
+        self._unbind_scroll()
         self.root.quit()
 
     def _select_expression_sheets(self):
         """Handle Expression Sheet Generator selection."""
         self._result = "expression_sheets"
+        self._unbind_scroll()
         self.root.quit()
 
     def _select_sprite_tester(self):
         """Handle Sprite Tester selection."""
         self._result = "sprite_tester"
+        self._unbind_scroll()
         self.root.quit()
 
     def _select_add_to_existing(self):
         """Handle Add to Character selection."""
         self._result = "add_to_existing"
+        self._unbind_scroll()
         self.root.quit()
 
     def _open_api_settings(self):
@@ -468,6 +498,7 @@ class LauncherWindow:
     def _on_close(self):
         """Handle window close."""
         self._result = None
+        self._unbind_scroll()
         self.root.quit()
 
     def run(self) -> Optional[str]:

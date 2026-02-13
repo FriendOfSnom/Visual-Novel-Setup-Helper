@@ -133,9 +133,40 @@ class FullWizard:
         # Header with step indicator
         self._build_header()
 
-        # Content area (step frames go here)
-        self._content_frame = tk.Frame(self._main_frame, bg=BG_COLOR, padx=30, pady=20)
-        self._content_frame.pack(fill="both", expand=True)
+        # Content area (step frames go here) — wrapped in scrollable canvas
+        # for small-screen support. Scrollbars are drag-only (no mousewheel)
+        # to avoid conflicts with scroll-wheel usage inside individual steps.
+        self._scroll_outer = tk.Frame(self._main_frame, bg=BG_COLOR)
+        self._scroll_outer.pack(fill="both", expand=True)
+
+        self._scroll_canvas = tk.Canvas(
+            self._scroll_outer, bg=BG_COLOR, highlightthickness=0
+        )
+        self._scroll_canvas.pack(fill="both", expand=True)
+
+        # The actual content frame lives inside the canvas
+        self._content_frame = tk.Frame(self._scroll_canvas, bg=BG_COLOR, padx=30, pady=20)
+        self._canvas_window = self._scroll_canvas.create_window(
+            (0, 0), window=self._content_frame, anchor="nw"
+        )
+
+        # Thin scrollbars overlaid via place() — drag-only, auto-show/hide
+        self._v_scrollbar = tk.Scrollbar(
+            self._scroll_outer, orient="vertical",
+            command=self._scroll_canvas.yview, width=10
+        )
+        self._h_scrollbar = tk.Scrollbar(
+            self._scroll_outer, orient="horizontal",
+            command=self._scroll_canvas.xview, width=10
+        )
+        self._scroll_canvas.configure(
+            xscrollcommand=self._h_scrollbar.set,
+            yscrollcommand=self._v_scrollbar.set,
+        )
+
+        # Track content size changes to update scroll region & auto-show bars
+        self._content_frame.bind("<Configure>", self._on_content_configure)
+        self._scroll_canvas.bind("<Configure>", self._on_canvas_configure)
 
         # Loading overlay (hidden by default)
         self._build_loading_overlay()
@@ -262,6 +293,54 @@ class FullWizard:
         )
         self._back_btn.pack(side="right", padx=(0, 12))
 
+    # --- Scrollable content area helpers ---
+
+    def _on_content_configure(self, event=None) -> None:
+        """Update scroll region when content size changes, show/hide scrollbars."""
+        self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+        self._update_scrollbars()
+
+    def _on_canvas_configure(self, event=None) -> None:
+        """When the canvas resizes, stretch content to fill width and update bars."""
+        canvas_w = self._scroll_canvas.winfo_width()
+        content_w = self._content_frame.winfo_reqwidth()
+        # Make content at least as wide as the canvas so it fills the space
+        self._scroll_canvas.itemconfigure(
+            self._canvas_window, width=max(canvas_w, content_w)
+        )
+        self._update_scrollbars()
+
+    def _update_scrollbars(self) -> None:
+        """Show scrollbars only when content overflows the visible area."""
+        try:
+            canvas_w = self._scroll_canvas.winfo_width()
+            canvas_h = self._scroll_canvas.winfo_height()
+            content_w = self._content_frame.winfo_reqwidth()
+            content_h = self._content_frame.winfo_reqheight()
+        except tk.TclError:
+            return  # Widget not ready yet
+
+        # Vertical scrollbar — right edge overlay
+        if content_h > canvas_h + 2:
+            self._v_scrollbar.place(
+                relx=1.0, rely=0, relheight=1.0, anchor="ne"
+            )
+        else:
+            self._v_scrollbar.place_forget()
+
+        # Horizontal scrollbar — bottom edge overlay
+        if content_w > canvas_w + 2:
+            self._h_scrollbar.place(
+                relx=0, rely=1.0, relwidth=1.0, anchor="sw"
+            )
+        else:
+            self._h_scrollbar.place_forget()
+
+    def _scroll_content_to_top(self) -> None:
+        """Reset scroll position to top-left when changing steps."""
+        self._scroll_canvas.xview_moveto(0)
+        self._scroll_canvas.yview_moveto(0)
+
     def _update_step_indicator(self) -> None:
         """Update step indicator to highlight current step."""
         for i, label in enumerate(self._step_labels):
@@ -349,6 +428,9 @@ class FullWizard:
                 break
 
         log_info(f"NAV: Entering step {new_step.STEP_ID} ({new_step.STEP_TITLE})")
+
+        # Reset scroll position before showing new step
+        self._scroll_content_to_top()
 
         if new_step.frame:
             new_step.frame.pack(fill="both", expand=True)
